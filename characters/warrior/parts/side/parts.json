@@ -1,0 +1,94 @@
+{
+  "view": "side",
+  "image": "side.png",
+  "parts": [
+    {
+      "name": "cape",
+      "file": "cape.png",
+      "depth": 0.5,
+      "pixels": 19704,
+      "filled": 134,
+      "cap": 0
+    },
+    {
+      "name": "pouch",
+      "file": "pouch.png",
+      "depth": 1.9,
+      "pixels": 7285,
+      "filled": 241,
+      "cap": 876
+    },
+    {
+      "name": "thigh_l",
+      "file": "thigh_l.png",
+      "depth": 2,
+      "pixels": 13853,
+      "filled": 196,
+      "cap": 1922
+    },
+    {
+      "name": "shin_l",
+      "file": "shin_l.png",
+      "depth": 2,
+      "pixels": 8856,
+      "filled": 0,
+      "cap": 1122
+    },
+    {
+      "name": "foot_l",
+      "file": "foot_l.png",
+      "depth": 2,
+      "pixels": 4581,
+      "filled": 0,
+      "cap": 353
+    },
+    {
+      "name": "hips",
+      "file": "hips.png",
+      "depth": 2.5,
+      "pixels": 3092,
+      "filled": 5,
+      "cap": 1074
+    },
+    {
+      "name": "torso",
+      "file": "torso.png",
+      "depth": 3,
+      "pixels": 10221,
+      "filled": 339,
+      "cap": 1613
+    },
+    {
+      "name": "head",
+      "file": "head.png",
+      "depth": 4,
+      "pixels": 16939,
+      "filled": 489,
+      "cap": 600
+    },
+    {
+      "name": "upper_arm_l",
+      "file": "upper_arm_l.png",
+      "depth": 5,
+      "pixels": 5224,
+      "filled": 0,
+      "cap": 652
+    },
+    {
+      "name": "forearm_l",
+      "file": "forearm_l.png",
+      "depth": 5,
+      "pixels": 2404,
+      "filled": 0,
+      "cap": 586
+    },
+    {
+      "name": "hand_l",
+      "file": "hand_l.png",
+      "depth": 5,
+      "pixels": 1120,
+      "filled": 0,
+      "cap": 371
+    }
+  ]
+}

@@ -11,5 +11,7 @@
   "outline_color": "#1b1325",
   "preview_scale": 8,
   "render_scale": 8,
-  "mesh_step": 4
+  "mesh_step": 4,
+  "frame": 96,
+  "frame_foot_margin": 12
 }

@@ -43,9 +43,16 @@
     {
       "name": "cape",
       "parent": "torso",
-      "start": [220, 220],
-      "end": [275, 610],
+      "start": [240, 205],
+      "end": [292, 615],
       "depth": 0.5
+    },
+    {
+      "name": "pouch",
+      "parent": "torso",
+      "start": [204, 350],
+      "end": [206, 430],
+      "depth": 1.9
     }
   ],
   "attachments": [
