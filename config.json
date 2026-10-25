@@ -1,0 +1,15 @@
+{
+  "canvas": 64,
+  "char_height": 48,
+  "foot_margin": 4,
+  "colors": 24,
+  "palette": null,
+  "alpha_threshold": 128,
+  "bg_tolerance": 40,
+  "min_part_ratio": 0.02,
+  "outline": true,
+  "outline_color": "#1b1325",
+  "preview_scale": 8,
+  "render_scale": 8,
+  "mesh_step": 4
+}

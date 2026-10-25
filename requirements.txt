@@ -1,0 +1,3 @@
+Pillow>=10.1
+numpy>=1.24
+rtmlib>=0.0.16

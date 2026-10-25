@@ -1,0 +1,11 @@
+# 크고 다시 받을 수 있는 것
+python/
+models/
+
+# 만들어지는 것
+output/
+characters/*/check/
+__pycache__/
+
+# 원본 보관용 (characters/ 에 복사해 쓴다)
+input/
