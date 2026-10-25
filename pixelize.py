@@ -135,13 +135,15 @@ def nearest_index(rgb, palette):
     return out
 
 
-def downscale(img, size, palette, threshold):
+def downscale(img, size, palette, threshold, keep=None):
     """원본 색을 먼저 팔레트 색으로 바꾼 뒤, 칸마다 가장 많이 나온 색 하나를 고른다.
-    평균을 내지 않으므로 색이 섞여 탁해지지 않는다. 칸의 절반 이상이 비어 있으면 투명으로 둔다."""
+    평균을 내지 않으므로 색이 섞여 탁해지지 않는다. 칸의 절반 이상이 비어 있으면 투명으로 둔다.
+    keep (출력 크기의 참/거짓 표)을 주면 절반 규칙 대신 keep 이 참이고 그림이 조금이라도 있는 칸을 칠한다."""
     a = np.asarray(img)
     h, w = a.shape[:2]
     solid = a[..., 3] >= threshold
-    idx = nearest_index(a[..., :3], palette).reshape(h, w)
+    idx = np.zeros((h, w), np.int64)
+    idx[solid] = nearest_index(a[..., :3][solid], palette)  # 빈 픽셀은 쓰이지 않으므로 계산하지 않는다
 
     out_w, out_h = size
     xs = np.linspace(0, w, out_w + 1).round().astype(int)
@@ -150,7 +152,7 @@ def downscale(img, size, palette, threshold):
     for j in range(out_h):
         for i in range(out_w):
             block = solid[ys[j]:ys[j + 1], xs[i]:xs[i + 1]]
-            if block.mean() < 0.5:
+            if (block.mean() < 0.5) if keep is None else (not keep[j, i] or not block.any()):
                 continue
             counts = np.bincount(idx[ys[j]:ys[j + 1], xs[i]:xs[i + 1]][block])
             out[j, i] = [*palette[counts.argmax()], 255]

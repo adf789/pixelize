@@ -73,5 +73,17 @@
       "bone": "hand_r",
       "depth": 0.5
     }
+  ],
+  "layers": [
+    {
+      "name": "helmet_iron",
+      "slot": "helmet",
+      "image": "helmet_iron_back.png"
+    },
+    {
+      "name": "helmet_gold",
+      "slot": "helmet",
+      "image": "helmet_gold_back.png"
+    }
   ]
 }

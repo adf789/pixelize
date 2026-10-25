@@ -50,6 +50,17 @@ animate.bat rig characters/<이름>
   - `length`: 손잡이→끝 길이를 최종 픽셀(64칸 기준)로. `depth`: 앞뒤 순서 (뒤 그림에서는 몸 뒤라 작게).
   - 붙인 물건은 `name` 으로 동작에서 뼈처럼 돌릴 수 있다 (손목 꺾기). 확인 그림에는 흰 네모로 보인다.
   - 앞·뒤는 같은 손(예: `hand_r`), 옆은 보이는 손 `hand_l` 에 붙인다.
+- 갑옷·투구·옷처럼 **몸에 딱 붙어 같이 휘는 장비**는 → `layers` 에 덮개 그림을 넣는다.
+  ```json
+  "layers": [
+    {"name": "helmet_iron", "slot": "helmet", "image": "helmet_iron_front.png"},
+    {"name": "helmet_gold", "slot": "helmet", "image": "helmet_gold_front.png"}
+  ]
+  ```
+  - 덮개 그림은 **그 방향 원본 그림과 같은 크기**의 투명 PNG 이고, 원본 위에 겹쳤을 때 딱 맞는 자리에 그려져 있어야 한다 (AI 인페인팅으로 원본의 그 부분만 다시 그린 뒤 그 부분만 남기면 된다).
+  - 같은 `slot` 의 층은 서로 바꿔 끼우는 변형이다. 합친 시트에는 slot 마다 **첫 번째** 층만 들어간다.
+  - 덮개는 몸과 같은 그물·무게로 휜다. 메시는 몸과 모든 덮개를 합친 모양에 씌운다.
+  - 붙인 물건(`attachments`)도 `slot` 을 줄 수 있다. 같은 slot 의 물건들은 뼈 하나(이름 = slot)를 함께 쓴다.
 - 겹칠 때 앞뒤가 틀림 → `depth` (큰 수가 앞). 추가 뼈는 각자 `depth` 를 갖는다.
 - 팔을 내린 기본 자세가 어색함 → `base_pose` 의 `rot` (모든 동작에 더해진다).
 
@@ -74,7 +85,7 @@ animate.bat check characters/<이름>
 ```
 
 - 열쇠 프레임은 `[시간 0~1, 값]`. 사이는 부드럽게 이어진다. 반복 동작은 `1` 의 값을 `0` 과 같게 둔다.
-- 채널: `rot` (도, **화면에서 시계 방향이 양수**), `len` (뼈 방향 늘이기 비율, 1=그대로), `x`/`y` (**최종 픽셀 단위**, 1 = 64칸 그림의 1칸).
+- 채널: `rot` (도, **화면에서 시계 방향이 양수**), `len` (뼈 방향 늘이기 비율, 1=그대로), `x`/`y` (**64칸 기준 픽셀**, 1 = 64칸 그림의 1칸. `canvas` 를 32로 바꾸면 절반, 128이면 두 배로 그려진다 — 붙인 물건의 `length` 도 같다).
 - 값은 `base_pose` 위에 더해진다 (`len` 은 곱해진다).
 - 뼈: `root`(전체 이동), `torso`, `head`, `upper_arm_l/r`, `forearm_l/r`, `hand_l/r`, `thigh_l/r`, `shin_l/r`, `foot_l/r`, 그리고 rig 의 추가 뼈와 붙인 물건(`sword` 등). 그 방향 rig 에 없는 뼈는 무시된다.
 - 긴 무기를 머리 위로 똑바로 세우면 64칸 밖으로 잘린다. 들어 올릴 때는 아래팔(`forearm`)을 굽혀 머리 뒤로 눕히고, 프레임 시각(6프레임이면 0, 0.2, 0.4 …)마다 열쇠를 두어 중간 프레임에서도 잘리지 않게 한다.
@@ -89,13 +100,18 @@ animate.bat check characters/<이름>
 ```
 animate.bat render characters/<이름> -o output/<이름>
 animate.bat render characters/<이름> -o output/<이름> --only side/attack front/walk   # 일부만 빠르게
+animate.bat render characters/<이름> -o output/<이름> --layers   # 장비 바꿔 끼우기용 층 시트도 만든다
 ```
+
+`--layers` 를 주면 `output/<이름>/layers/<방향>_<동작>/<순위>_<층>.png` 와 `layers.json` 이 생긴다.
+층마다, 그리고 앞뒤 순서(depth)마다 시트를 나눈다. 그래서 게임에서 `sorting_order` 순서대로 쌓기만 하면 팔이 갑옷 앞으로 오는 장면도 맞게 겹친다.
 
 ## 5. 결과 확인 (반드시 그림을 본다)
 
 먼저 출력에 `주의 … 칸 밖으로 잘림` 이 있는지 본다. 있으면 그 동작의 움직임을 줄이거나 무기를 눕힌다.
 
-`output/<이름>/check/<방향>_<동작>.png` 를 Read 로 연다. 위 줄은 휘게 한 원본, 아래 줄은 픽셀 결과.
+`output/<이름>/check/<방향>_<동작>.png` 를 Read 로 연다. 위 줄은 휘게 한 원본, 가운데 줄은 픽셀 결과.
+`--layers` 로 만들었으면 맨 아래 줄에 층 시트를 순서대로 쌓은 결과가 있다 — 가운데 줄과 외곽선만 빼고 같아야 한다.
 
 | 보이는 문제 | 고치는 곳 |
 | --- | --- |
@@ -113,4 +129,5 @@ animate.bat render characters/<이름> -o output/<이름> --only side/attack fro
 - 만든 시트: `output/<이름>/<방향>_<동작>.png` (64칸 × 프레임 수 가로 띠)
 - `output/<이름>/animations.json`: 동작마다 프레임 수, fps, 반복 여부, 기준점
 - 미리 보기 GIF: `output/<이름>/check/*.gif`
+- (`--layers` 일 때) 층 시트 폴더와 `layers.json`
 - 고친 rig 내용과 남은 흠을 짧게 적는다.

@@ -17,6 +17,7 @@ import json
 import math
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -227,7 +228,11 @@ def save_rig_check(char_dir, rig, cfg):
 # ---------------------------------------------------------------- 메시와 무게
 
 class Model:
-    """한 방향 그림의 쉼 자세(기준) 그림, 관절, 메시, 무게를 그리기 크기에 맞춰 준비한다."""
+    """한 방향 그림의 쉼 자세 그림, 관절, 메시, 무게를 그리기 크기에 맞춰 준비한다.
+
+    층: 0번은 몸(rig 의 image), 그 뒤로 rig 의 layers(갑옷·투구처럼 몸 그림에 맞춰 그린 덮개),
+    그 뒤로 attachments(칼처럼 휘지 않는 물건). 같은 slot 의 층들은 서로 바꿔 끼우는 변형이고,
+    합친 그림에는 slot 마다 첫 번째 층만 들어간다."""
 
     def __init__(self, char_dir, rig, cfg):
         k, thr = cfg["render_scale"], cfg["alpha_threshold"]
@@ -240,34 +245,58 @@ class Model:
         if w > size:
             sys.exit(f"{rig['image']}: 그림이 너무 넓습니다 ({w} > {size}). char_height 를 줄이세요")
 
-        rest = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-        rest.paste(img.crop((x0, y0, x1, y1)).resize((w, h), Image.LANCZOS), (ox, oy))
+        def place(im):
+            canvas = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+            canvas.paste(im.crop((x0, y0, x1, y1)).resize((w, h), Image.LANCZOS), (ox, oy))
+            return canvas
+
         self.k, self.size, self.thr, self.view = k, size, thr, rig["view"]
-        self.rest = rest
-        self.texture = np.asarray(rest)
+        # 길이·이동값은 "64칸 기준 픽셀"로 적는다. 32칸이면 절반, 128칸이면 두 배로 그려져
+        # 같은 rig·동작 파일을 어느 크기에서든 그대로 쓸 수 있다.
+        self.unit = size / 64
+        self.rest = place(img)
+        self.layers = [{"name": "body", "slot": "body"}]
+        rests = [self.rest]
+        for layer in rig.get("layers", []):
+            limg = px.remove_background(Image.open(char_dir / layer["image"]), cfg["bg_tolerance"])
+            if limg.size != img.size:
+                sys.exit(f"{layer['image']}: 크기가 {rig['image']} 와 같아야 합니다 ({limg.size} != {img.size})")
+            rests.append(place(limg))
+            self.layers.append({"name": layer["name"], "slot": layer.get("slot", layer["name"])})
+        self.layer_images = rests[1:]
+        self.texture = np.concatenate([np.asarray(r) for r in rests], axis=1)  # 층 그림을 가로로 이어 붙인다
         self.to_canvas = lambda p: (np.asarray(p, float) - [x0, y0]) * f + [ox, oy]
         self.to_source = lambda p: (np.asarray(p, float) - [ox, oy]) / f + [x0, y0]
+
         bones, joints, depth_of = rig_bones(rig)
         self.joints = {n: self.to_canvas(p) for n, p in joints.items()}
         attachments = rig.get("attachments", [])
+        placed = []
         for a in attachments:
-            # 붙일 뼈 위 'at' 비율 자리가 손잡이, 그 뼈 방향에서 'angle'도 돌린 쪽이 칼끝
+            # 붙일 뼈 위 'at' 비율 자리가 손잡이, 그 뼈 방향에서 'angle'도 돌린 쪽이 끝.
+            # 같은 slot 의 물건들은 뼈 하나(이름 = slot)를 함께 쓴다.
+            slot = a.get("slot", a["name"])
             j0, j1 = next((b[2], b[3]) for b in bones if b[0] == a["bone"])
             s, e = self.joints[j0], self.joints[j1]
             grip = s + (e - s) * a.get("at", 0.5)
             ang = math.atan2(e[1] - s[1], e[0] - s[0]) + math.radians(a.get("angle", 0))
-            self.joints[a["name"] + "_start"] = grip
-            self.joints[a["name"] + "_end"] = grip + a["length"] * k * np.array([math.cos(ang), math.sin(ang)])
-            bones.append((a["name"], a["bone"], a["name"] + "_start", a["name"] + "_end"))
-            depth_of[a["name"]] = a.get("depth", 5)
+            end = grip + a["length"] * self.unit * np.array([math.cos(ang), math.sin(ang)])
+            placed.append((grip, end))
+            if slot not in [b[0] for b in bones]:
+                self.joints[slot + "_start"], self.joints[slot + "_end"] = grip, end
+                bones.append((slot, a["bone"], slot + "_start", slot + "_end"))
+                depth_of[slot] = a.get("depth", 5)
         self.bones = bones
         names = [b[0] for b in bones]
         self.base_pose = rig.get("base_pose", {})
 
-        self.verts, self.tris = build_mesh(self.texture[..., 3] >= thr, cfg["mesh_step"])
+        # 메시는 모든 층을 합친 모양에 씌워서, 어느 층이든 같은 그물로 휜다.
+        step = cfg["mesh_step"]
+        alpha = self.texture[..., 3].reshape(size, len(rests), size) >= thr
+        self.verts, self.tris = build_mesh(alpha.any(1), step)
         far = set(FAR_OF.values()) if self.view == "side" else set()
-        skip = far | {a["name"] for a in attachments}
-        self.weights = skin_weights(self.verts, self.tris, self.joints, cfg["mesh_step"], skip, bones)
+        skip = far | {a.get("slot", a["name"]) for a in attachments}
+        self.weights = skin_weights(self.verts, self.tris, self.joints, step, skip, bones)
 
         depth = np.array([depth_of[n] for n in names], float)
         dominant = self.weights[self.tris].sum(1).argmax(1)
@@ -292,17 +321,46 @@ class Model:
             self.tri_depth = np.concatenate([self.tri_depth, depth[self.all_weights[copies].sum(1).argmax(1)]])
             self.tri_tint = np.concatenate([self.tri_tint, np.ones(limb.sum(), bool)])
 
-        self.src_pts = self.verts  # 텍스처 좌표
-        self.attach_quads, self.attach_images = [], []
-        for a in attachments:
-            self._attach(char_dir / a["image"], a, names.index(a["name"]), depth_of[a["name"]])
+        # 층마다 같은 삼각형을 쓰되 텍스처 자리만 옮긴다. 덮개 층은 그림이 있는 칸의 삼각형만 남긴다.
+        n = len(self.verts)
+        self.src_pts = np.vstack([self.verts + [i * size, 0] for i in range(len(rests))])
+        cell = (self.verts[self.tri_src].min(1) // step).astype(int)
+        rows, cols = math.ceil(size / step), math.ceil(size / step)
+        tris, src, dep, tint, lay = [self.tris], [self.tri_src], [self.tri_depth], [self.tri_tint], [np.zeros(len(self.tris), int)]
+        for i in range(1, len(rests)):
+            pad = np.zeros((rows * step, cols * step), bool)
+            pad[:size, :size] = alpha[:, i]
+            occupied = pad.reshape(rows, step, cols, step).any(axis=(1, 3))
+            keep = occupied[cell[:, 1], cell[:, 0]]
+            tris.append(self.tris[keep])
+            src.append(self.tri_src[keep] + i * n)
+            dep.append(self.tri_depth[keep])
+            tint.append(self.tri_tint[keep])
+            lay.append(np.full(keep.sum(), i))
+        self.tris, self.tri_src = np.vstack(tris), np.vstack(src)
+        self.tri_depth, self.tri_tint, self.tri_layer = np.concatenate(dep), np.concatenate(tint), np.concatenate(lay)
 
-    def _attach(self, path, a, bone_i, depth):
+        self.attach_quads, self.attach_images = [], []
+        for a, (grip, end) in zip(attachments, placed):
+            self.layers.append({"name": a["name"], "slot": a.get("slot", a["name"])})
+            self._attach(char_dir / a["image"], a, grip, end, names.index(a.get("slot", a["name"])),
+                         a.get("depth", 5), len(self.layers) - 1)
+
+        slots = []
+        for layer in self.layers:
+            if layer["slot"] not in slots:
+                slots.append(layer["slot"])
+        self.slots = slots
+        first = {}
+        for i, layer in enumerate(self.layers):
+            first.setdefault(layer["slot"], i)
+        self.default_layers = sorted(first.values())
+
+    def _attach(self, path, a, start, end, bone_i, depth, layer_i):
         """무기처럼 휘지 않는 그림 한 장을 뼈에 붙인다. 네모 하나(삼각형 두 개)로 그린다.
-        그림은 텍스처 오른쪽에 이어 붙이고, 그림 속 grip→tip 방향을 뼈 방향에 맞춘다."""
+        그림은 텍스처 오른쪽에 이어 붙이고, 그림 속 grip→tip 방향을 start→end 방향에 맞춘다."""
         img = Image.open(path).convert("RGBA")
         grip, tip = np.array(a["grip"], float), np.array(a["tip"], float)
-        start, end = self.joints[a["name"] + "_start"], self.joints[a["name"] + "_end"]
         scale = np.linalg.norm(end - start) / np.linalg.norm(tip - grip)
         tw, th = max(1, round(img.width * scale)), max(1, round(img.height * scale))
         img = img.resize((tw, th), Image.LANCZOS)
@@ -329,17 +387,40 @@ class Model:
         self.src_pts = np.vstack([self.src_pts, corners + [ax, 0]])
         self.tri_depth = np.concatenate([self.tri_depth, [depth, depth]])
         self.tri_tint = np.concatenate([self.tri_tint, [False, False]])
+        self.tri_layer = np.concatenate([self.tri_layer, [layer_i, layer_i]])
         self.attach_quads.append(rest)
         self.attach_images.append(img)
 
-    def render(self, pose):
-        mats = bone_matrices(self.bones, self.joints, pose, self.k)
+    def _candidates(self, pose):
+        mats = bone_matrices(self.bones, self.joints, pose, self.unit)
         stack = np.stack([mats[b[0]] for b in self.bones])  # (B,3,3)
         homo = np.c_[self.all_verts, np.ones(len(self.all_verts))]
         moved = np.einsum("bij,nj->nbi", stack, homo)[..., :2]  # (N,B,2)
         dst = (moved * self.all_weights[..., None]).sum(1)
-        return rasterize(dst, self.src_pts, self.tris, self.tri_src, self.tri_depth, self.tri_tint,
-                         self.texture, self.size, self.thr)
+        pix, tri, rgba = rasterize(dst, self.src_pts, self.tris, self.tri_src, self.tri_tint,
+                                   self.texture, self.size, self.thr)
+        # 앞뒤: depth 가 먼저, 같으면 뒤에 오는 층(덮개)이 앞, 그다음 삼각형 순서
+        prio = self.tri_depth[tri] * 1e8 + self.tri_layer[tri] * 1e6 + tri
+        return pix, tri, prio, rgba
+
+    def render(self, pose, parts=False):
+        """slot 마다 첫 번째 층을 합친 그림. parts=True 면 (층 번호, depth) 마다 따로 그린 그림도 함께 돌려준다.
+        따로 그린 그림을 게임에서 depth 순서대로 쌓으면 합친 그림과 같아진다."""
+        pix, tri, prio, rgba = self._candidates(pose)
+        layer = self.tri_layer[tri]
+        m = np.isin(layer, self.default_layers)
+        combined = compose(pix[m], prio[m], rgba[m], self.size)
+        if not parts:
+            return combined
+        depth = self.tri_depth[tri]
+        pieces = {}
+        for key in sorted(set(zip(layer.tolist(), depth.tolist()))):
+            m = (layer == key[0]) & (depth == key[1])
+            pieces[key] = compose(pix[m], prio[m], rgba[m], self.size)
+        return combined, pieces
+
+    def depth_levels(self):
+        return sorted(set(self.tri_depth.tolist()))
 
 
 def build_mesh(solid, step):
@@ -430,26 +511,27 @@ def _move(x, y):
     return np.array([[1, 0, x], [0, 1, y], [0, 0, 1]], float)
 
 
-def bone_matrices(bones, joints, pose, k):
+def bone_matrices(bones, joints, pose, unit):
     """뼈마다 '쉼 자세 좌표 → 움직인 좌표' 행렬. 회전은 화면에서 시계 방향이 양수(도).
-    len 은 뼈 방향으로 늘이고 줄이는 비율, x/y 는 최종 픽셀 단위 이동."""
+    len 은 뼈 방향으로 늘이고 줄이는 비율, x/y 는 64칸 기준 픽셀 단위 이동 (unit = 그리기 픽셀 / 64칸 기준 픽셀)."""
     root = pose.get("root", {})
-    root_m = _move(root.get("x", 0) * k, root.get("y", 0) * k)
+    root_m = _move(root.get("x", 0) * unit, root.get("y", 0) * unit)
     mats = {}
     for name, parent, j0, j1 in bones:
         p = pose.get(name, {})
         s, e = joints[j0], joints[j1]
         a = math.degrees(math.atan2(e[1] - s[1], e[0] - s[0]))
         stretch = _rot(a) @ np.diag([p.get("len", 1.0), 1, 1]) @ _rot(-a)
-        local = (_move(p.get("x", 0) * k, p.get("y", 0) * k) @ _move(*s) @ _rot(p.get("rot", 0))
+        local = (_move(p.get("x", 0) * unit, p.get("y", 0) * unit) @ _move(*s) @ _rot(p.get("rot", 0))
                  @ stretch @ _move(-s[0], -s[1]))
         mats[name] = (mats[parent] if parent else root_m) @ local
     return mats
 
 
-def rasterize(dst, src, tris, tri_src, depth, tint, texture, size, thr):
-    """움직인 삼각형마다 쉼 자세 그림에서 색을 가져와 칠한다. 겹치면 depth 가 큰 것이 앞."""
-    pix_all, prio_all, rgba_all = [], [], []
+def rasterize(dst, src, tris, tri_src, tint, texture, size, thr):
+    """움직인 삼각형마다 쉼 자세 그림에서 색을 가져온다.
+    겹침은 정하지 않고 (픽셀 번호, 삼각형 번호, 색) 후보를 모두 돌려준다 → compose 에서 앞뒤를 고른다."""
+    pix_all, tri_all, rgba_all = [], [], []
     # 묶음마다 가장 큰 삼각형 크기만큼 칸을 잡으므로, 크기가 비슷한 것끼리 묶는다 (칼처럼 큰 삼각형 때문에 느려지지 않게)
     span = np.ptp(dst[tris], axis=1).max(1)
     order = np.argsort(span)
@@ -485,17 +567,18 @@ def rasterize(dst, src, tris, tri_src, depth, tint, texture, size, thr):
         keep = inside & (color[..., 3] >= thr)
         rows, cols = np.nonzero(keep)
         pix_all.append(Y[rows, cols] * size + X[rows, cols])
-        prio_all.append(depth[idx][rows] * 10_000_000 + idx[rows])
+        tri_all.append(idx[rows])
         c = color[rows, cols].astype(np.float32)
         c[tint[idx][rows], :3] *= 0.65  # 뒤쪽 복사본은 어둡게
         rgba_all.append(c)
+    return np.concatenate(pix_all), np.concatenate(tri_all), np.concatenate(rgba_all)
 
-    pix = np.concatenate(pix_all)
-    prio = np.concatenate(prio_all)
-    rgba = np.concatenate(rgba_all)
+
+def compose(pix, prio, rgba, size):
+    """같은 픽셀에 여러 후보가 있으면 prio 가 큰 것을 남긴다."""
     o = np.lexsort((prio, pix))
     pix, rgba = pix[o], rgba[o]
-    last = np.r_[pix[1:] != pix[:-1], True]
+    last = np.r_[pix[1:] != pix[:-1], True] if len(pix) else np.zeros(0, bool)
     out = np.zeros((size * size, 4), np.uint8)
     out[pix[last]] = rgba[last].round().astype(np.uint8)
     return Image.fromarray(out.reshape(size, size, 4))
@@ -584,14 +667,75 @@ def on_gray(img, color=(200, 200, 200, 255)):
     return bg
 
 
-def draw_anim_check(hi_frames, pix_frames):
-    """위 줄: 휘게 한 원본(크게), 아래 줄: 픽셀 결과(4배)."""
+def draw_anim_check(hi_frames, pix_frames, stacked=None):
+    """위 줄: 휘게 한 원본(크게), 가운데 줄: 픽셀 결과(4배), (있으면) 아래 줄: 층 시트를 순서대로 쌓은 결과."""
     cell = 256
-    sheet = Image.new("RGBA", (cell * len(hi_frames), cell * 2), (255, 255, 255, 255))
-    for i, (hi, pf) in enumerate(zip(hi_frames, pix_frames)):
+    rows = [pix_frames] + ([stacked] if stacked else [])
+    sheet = Image.new("RGBA", (cell * len(hi_frames), cell * (1 + len(rows))), (255, 255, 255, 255))
+    for i, hi in enumerate(hi_frames):
         sheet.paste(on_gray(hi.resize((cell, cell), Image.LANCZOS)), (i * cell, 0))
-        sheet.paste(on_gray(pf.resize((cell, cell), Image.NEAREST)), (i * cell, cell))
+        for r, frames in enumerate(rows, start=1):
+            sheet.paste(on_gray(frames[i].resize((cell, cell), Image.NEAREST)), (i * cell, r * cell))
     return sheet
+
+
+def write_layer_sheets(out, name, model, part_frames, n, palette, cfg):
+    """(층, depth) 마다 시트를 하나씩 쓴다. 파일 이름 앞 두 자리는 depth 순위(작을수록 뒤).
+    겹칠 경계에 검은 줄이 생기지 않도록 층 시트에는 외곽선을 두르지 않는다."""
+    canvas = cfg["canvas"]
+    layer_dir = out / "layers" / name
+    if layer_dir.exists():
+        shutil.rmtree(layer_dir)
+    layer_dir.mkdir(parents=True)
+    rank = {d: i for i, d in enumerate(model.depth_levels())}
+    thr, k = cfg["alpha_threshold"], model.k
+
+    def solid(img):
+        return np.asarray(img)[..., 3] >= thr
+
+    def per_cell(mask):  # 64칸의 칸마다 그림이 차지한 비율
+        return mask.reshape(canvas, k, canvas, k).mean(axis=(1, 3))
+
+    # 한 칸이 여러 층에 나뉘어 걸치면 어느 층도 절반이 안 돼 구멍이 난다.
+    # 그래서 칠할지는 (합친 그림 + 이 층) 모양으로 정하고, 그 칸은 가장 많이 차지한 층이 맡는다.
+    default_keys = [key for key in part_frames if key[0] in model.default_layers]
+    masks = {key: {i: solid(img) for i, img in frames.items()} for key, frames in part_frames.items()}
+    cells = {key: {i: per_cell(m) for i, m in frames.items()} for key, frames in masks.items()}
+    default_union = {}
+    for i in range(n):
+        u = np.zeros((model.size, model.size), bool)
+        for o in default_keys:
+            if i in masks[o]:
+                u |= masks[o][i]
+        default_union[i] = u
+
+    def keep_mask(key, i):
+        own = cells[key][i]
+        others = [cells[o][i] for o in default_keys if o != key and i in cells[o]]
+        best = own >= np.max(others, axis=0) if others else True
+        filled = per_cell(default_union[i] | masks[key][i]) >= 0.5
+        return (own >= 0.5) | (filled & best & (own > 0))
+
+    parts = []
+    stacked = [Image.new("RGBA", (canvas, canvas)) for _ in range(n)]
+    for (layer_i, depth) in sorted(part_frames, key=lambda kd: (rank[kd[1]], model.slots.index(model.layers[kd[0]]["slot"]), kd[0])):
+        frames = part_frames[(layer_i, depth)]
+        small = [px.downscale(frames[i], (canvas, canvas), palette, thr, keep_mask((layer_i, depth), i)) if i in frames
+                 else Image.new("RGBA", (canvas, canvas)) for i in range(n)]
+        if not any(np.asarray(s)[..., 3].any() for s in small):
+            continue
+        layer = model.layers[layer_i]
+        file = f"{rank[depth]:02d}_{layer['name']}.png"
+        sheet = Image.new("RGBA", (canvas * n, canvas))
+        for i, s in enumerate(small):
+            sheet.paste(s, (i * canvas, 0))
+        sheet.save(layer_dir / file)
+        parts.append({"file": f"layers/{name}/{file}", "layer": layer["name"], "slot": layer["slot"], "depth": depth,
+                      "sorting_order": rank[depth] * 100 + model.slots.index(layer["slot"])})
+        if layer_i in model.default_layers:
+            for i, s in enumerate(small):
+                stacked[i].alpha_composite(s)
+    return parts, stacked
 
 
 # ---------------------------------------------------------------- render
@@ -615,13 +759,15 @@ def cmd_render(args):
     if cfg["palette"]:
         palette = px.read_hex(cfg["palette"])
     else:
-        sources = [m.rest for m in models.values()] + [img for m in models.values() for img in m.attach_images]
+        sources = [img for m in models.values() for img in [m.rest] + m.layer_images + m.attach_images]
         palette = px.build_palette(sources, cfg["colors"], cfg["alpha_threshold"])
         saved = list(palette) + ([px.hex_to_rgb(cfg["outline_color"])] if cfg["outline"] else [])
         px.write_hex(out / "palette.hex", saved)
 
     meta_path = out / "animations.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
+    layers_path = out / "layers.json"
+    layers_meta = json.loads(layers_path.read_text(encoding="utf-8")) if layers_path.exists() else {}
     canvas = cfg["canvas"]
     for view, model in models.items():
         for anim_path in sorted((anims_dir / view).glob("*.json")):
@@ -631,9 +777,16 @@ def cmd_render(args):
             anim = load_anim(anim_path, anims_dir)
             n = anim["frames"]
             hi_frames, pix_frames = [], []
+            part_frames = {}  # (층, depth) → {프레임 번호: 그림}
             for i in range(n):
                 t = i / n if anim["loop"] else i / max(1, n - 1)
-                hi = model.render(pose_at(anim, model.base_pose, t))
+                pose = pose_at(anim, model.base_pose, t)
+                if args.layers:
+                    hi, pieces = model.render(pose, parts=True)
+                    for key, img in pieces.items():
+                        part_frames.setdefault(key, {})[i] = img
+                else:
+                    hi = model.render(pose)
                 cut = clipped_sides(hi, model.k)
                 if cut:
                     print(f"  주의 {view}_{anim_path.stem} {i}번 프레임: 그림이 칸 밖으로 잘림 ({', '.join(cut)})")
@@ -651,11 +804,17 @@ def cmd_render(args):
             gif = [on_gray(f).resize((canvas * 4, canvas * 4), Image.NEAREST).convert("P") for f in pix_frames]
             gif[0].save(out / "check" / f"{name}.gif", save_all=True, append_images=gif[1:],
                         duration=round(1000 / anim["fps"]), loop=0)
-            draw_anim_check(hi_frames, pix_frames).save(out / "check" / f"{name}.png")
             meta[name] = {"frames": n, "fps": anim["fps"], "loop": anim["loop"],
                           "frame_size": canvas, "pivot": [0.5, cfg["foot_margin"] / canvas]}
-            print(f"  {name}.png ({n}프레임)")
+            stacked = None
+            if args.layers:
+                parts, stacked = write_layer_sheets(out, name, model, part_frames, n, palette, cfg)
+                layers_meta[name] = {**meta[name], "parts": parts}
+            draw_anim_check(hi_frames, pix_frames, stacked).save(out / "check" / f"{name}.png")
+            print(f"  {name}.png ({n}프레임)" + (f", 층 시트 {len(parts)}장" if args.layers else ""))
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    if args.layers:
+        layers_path.write_text(json.dumps(layers_meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def main():
@@ -678,6 +837,8 @@ def main():
     p_render.add_argument("-c", "--config", type=Path, default=HERE / "config.json")
     p_render.add_argument("-a", "--anims", type=Path, default=HERE / "anims")
     p_render.add_argument("--only", nargs="*", help="이 동작만 만든다 (예: front/walk side/attack)")
+    p_render.add_argument("--layers", action="store_true",
+                          help="층(몸·덮개·물건)과 앞뒤 순서별로 나눈 시트와 layers.json 도 만든다")
     p_render.set_defaults(func=cmd_render)
 
     args = parser.parse_args()

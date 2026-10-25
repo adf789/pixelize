@@ -111,6 +111,15 @@ animate.bat render characters\warrior -o output\warrior --only side/attack   # �
 - **추가 뼈(`extra_bones`)**: 망토처럼 팔다리에 붙어 있지만 따로 움직일 부분에 뼈를 더한다. 없으면 팔을 들 때 망토가 같이 끌려 올라간다.
 - **붙인 물건(`attachments`)**: 칼처럼 휘면 안 되는 그림 한 장을 손 뼈에 붙인다. 그물로 휘지 않고 네모 그대로 손을 따라 움직이며, 동작에서 `sword` 같은 이름으로 손목처럼 돌릴 수 있다. 그 그림의 색도 팔레트에 들어간다. 형식은 스킬 문서 참고.
 - **잘림 경고**: 그림이 64칸 가장자리에 닿으면 `주의 … 칸 밖으로 잘림` 을 출력한다.
+- **장비 층(`layers`)**: 갑옷·투구처럼 몸에 붙어 같이 휘는 장비는 원본과 같은 크기의 덮개 그림으로 넣는다. 몸과 같은 그물로 휘므로 프레임이 저절로 맞는다. 같은 `slot` 의 층은 바꿔 끼우는 변형이다.
+- **층 시트(`--layers`)**: 층마다, 그리고 앞뒤 순서(depth)마다 시트를 나눠 낸다. 몸 하나도 "다리 / 몸통 / 머리 / 팔"처럼 여러 장으로 나뉘는데, 그래야 팔이 갑옷 몸통 앞으로 오는 장면도 쌓는 순서만으로 맞게 겹친다.
+  - 64칸의 한 칸이 여러 시트에 걸치면 구멍이 나지 않도록, 칠할지는 합친 모양으로 정하고 가장 많이 차지한 시트가 그 칸을 맡는다.
+  - 층 시트에는 외곽선을 두르지 않는다 (겹친 경계에 검은 줄이 생기므로). 외곽선은 게임에서 다 쌓은 뒤 한 번 두른다.
+
+### 장비 조합 수
+
+투구 10 × 갑옷 10 × 무기 10 을 통째로 그리면 1,000벌이지만, 층으로 나누면 몸 1 + 10 + 10 + 10 = 31벌이다.
+색만 다른 변형은 그림을 만들지 않고 게임에서 팔레트를 바꿔 끼운다.
 
 ## 파일
 
@@ -119,6 +128,9 @@ animate.bat render characters\warrior -o output\warrior --only side/attack   # �
 | `characters\<이름>\front.png` 등 | 원본 일러스트 (앞·뒤는 T자, 옆은 왼쪽을 봄) |
 | `characters\<이름>\rig_<방향>.json` | 관절 좌표(원본 픽셀 기준), 기본 자세, 앞뒤 순서, 추가 뼈, 붙인 물건 |
 | `characters\<이름>\sword.png` | 손에 붙일 칼 그림 (지금 것은 코드로 그린 시험용. AI로 뽑은 그림으로 바꾸고 `grip`/`tip` 좌표만 고치면 된다) |
+| `characters\<이름>\helmet_<종류>_<방향>.png` | 투구 덮개 그림 (시험용 쇠/금 두 가지, 코드로 그림) |
+| `output\<이름>\layers\<방향>_<동작>\<순위>_<층>.png` | (`--layers`) 층·앞뒤 순서별 시트. 앞 두 자리가 앞뒤 순위(작을수록 뒤) |
+| `output\<이름>\layers.json` | (`--layers`) 동작마다 층 시트 목록: 파일, 층, slot, depth, `sorting_order` |
 | `characters\<이름>\check\rig_<방향>.png` | 관절·뼈·무게 확인 그림 (100칸 눈금) |
 | `anims\<방향>\<동작>.json` | 동작 열쇠 프레임. 형식은 스킬 문서 참고. 뒤 그림은 `{"mirror_of": "front/walk"}` 로 앞 동작을 뒤집어 쓴다 |
 | `output\<이름>\<방향>_<동작>.png` | 64칸 × 프레임 수 가로 띠 스프라이트 시트 |
@@ -132,3 +144,9 @@ animate.bat render characters\warrior -o output\warrior --only side/attack   # �
 - 시트를 `Sprite Mode = Multiple`, `Grid By Cell Size 64×64` 로 자른다.
 - 기준점은 `animations.json` 의 `pivot` (발끝).
 - 왼쪽 방향은 옆 시트를 `SpriteRenderer.flipX` 로 뒤집어 쓴다 (옆 그림이 왼쪽을 보므로, 오른쪽으로 갈 때 뒤집는다).
+
+### 장비 바꿔 끼우기 (`--layers`)
+
+- `layers.json` 의 `parts` 하나마다 `SpriteRenderer` 를 하나 두고 `sortingOrder` 를 `sorting_order` 로 맞춘다. 같은 `slot` 의 변형들은 `sorting_order` 가 같으므로 한 렌더러를 같이 쓴다.
+- 2D Animation 패키지의 `Sprite Library` / `Sprite Resolver` 로 묶으면, 동작은 "프레임 번호"로만 돌고 장비를 바꿀 때는 그 slot 의 그림 묶음만 갈아 끼우면 된다.
+- 외곽선은 캐릭터 전체를 다 그린 뒤 외곽선 셰이더로 한 번 두른다.
