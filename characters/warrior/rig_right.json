@@ -1,0 +1,82 @@
+{
+  "image": "right.png",
+  "view": "right",
+  "base_pose": {},
+  "joints": {
+    "shoulder_l": [178.1, 197.9],
+    "elbow_l": [164.0, 272.0],
+    "wrist_l": [162.0, 330.0],
+    "hip_l": [210.5, 374.7],
+    "knee_l": [205.1, 566.4],
+    "ankle_l": [178.1, 720.3],
+    "toe_l": [253.0, 754.7],
+    "hand_tip_l": [164.0, 350.0],
+    "shoulder_r": [178.1, 197.9],
+    "elbow_r": [164.0, 272.0],
+    "wrist_r": [162.0, 330.0],
+    "hip_r": [210.5, 374.7],
+    "knee_r": [205.1, 566.4],
+    "ankle_r": [178.1, 720.3],
+    "toe_r": [253.0, 754.7],
+    "hand_tip_r": [164.0, 350.0],
+    "pelvis": [210.5, 374.7],
+    "neck": [178.1, 197.9],
+    "head_center": [215.9, 133.3]
+  },
+  "extra_bones": [
+    {
+      "name": "cape",
+      "parent": "torso",
+      "start": [114, 205],
+      "end": [62, 615],
+      "depth": 0.5
+    },
+    {
+      "name": "pouch",
+      "parent": "torso",
+      "start": [150, 350],
+      "end": [148, 430],
+      "depth": 1.9
+    }
+  ],
+  "depth": {
+    "torso": 3,
+    "head": 4,
+    "upper_arm_l": 0,
+    "forearm_l": 0,
+    "hand_l": 0,
+    "upper_arm_r": 5,
+    "forearm_r": 5,
+    "hand_r": 5,
+    "thigh_l": 1,
+    "shin_l": 1,
+    "foot_l": 1,
+    "thigh_r": 2,
+    "shin_r": 2,
+    "foot_r": 2
+  },
+  "layers": [
+    {
+      "name": "helmet_iron",
+      "slot": "helmet",
+      "image": "helmet_iron_right.png"
+    },
+    {
+      "name": "helmet_gold",
+      "slot": "helmet",
+      "image": "helmet_gold_right.png"
+    }
+  ],
+  "attachments": [
+    {
+      "name": "sword",
+      "image": "sword.png",
+      "grip": [45, 430],
+      "tip": [45, 6],
+      "length": 22,
+      "angle": 0,
+      "bone": "hand_r",
+      "depth": 5.5
+    }
+  ]
+}

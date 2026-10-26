@@ -2,7 +2,7 @@
 
 사용법:
     python animate.py rig 캐릭터폴더 [-c config.json]
-        front.png / back.png / side.png 에서 관절을 찾아 rig_<방향>.json 과 확인 그림 check/rig_<방향>.png 를 만든다.
+        front.png / back.png / left.png / right.png 에서 관절을 찾아 rig_<방향>.json 과 확인 그림 check/rig_<방향>.png 를 만든다.
     python animate.py check 캐릭터폴더
         rig_<방향>.json 을 손으로 고친 뒤 확인 그림만 다시 그린다.
     python animate.py parts 캐릭터폴더 [--force]
@@ -31,7 +31,9 @@ from PIL import Image, ImageDraw, ImageFont
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # 내장 Python은 스크립트 폴더를 자동으로 찾지 않는다
 import pixelize as px  # noqa: E402
-VIEWS = ("front", "back", "side")
+VIEWS = ("front", "back", "left", "right")
+# 옆 그림: 왼쪽을 보면 캐릭터의 왼쪽(_l)이, 오른쪽을 보면 오른쪽(_r)이 보는 사람 쪽(가까운 쪽)이다.
+SIDE_VIEWS = {"left": "l", "right": "r"}
 ANIM_DEFAULTS = {"render_scale": 8, "mesh_step": 4}
 MODEL_URL = ("https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/"
              "rtmw-dw-x-l_simcc-cocktail14_270e-384x288_20231122.zip")
@@ -54,17 +56,28 @@ BONES = [
     ("foot_r", "shin_r", "ankle_r", "toe_r"),
 ]
 BONE_NAMES = [b[0] for b in BONES]
-LIMBS_L = ["upper_arm_l", "forearm_l", "hand_l", "thigh_l", "shin_l", "foot_l"]
-FAR_OF = {name: name[:-2] + "_r" for name in LIMBS_L}  # 옆 그림: 보이는 팔다리 → 뒤쪽 복사본
+LIMB_PARTS = ["upper_arm", "forearm", "hand", "thigh", "shin", "foot"]
+
+
+def far_of(view):
+    """옆 그림에서 보이는 팔다리 → 뒤쪽 복사본 뼈. 옆 그림이 아니면 빈 dict.
+    옆 그림은 두 다리·두 팔이 겹쳐 있어서, 보이는 쪽 조각을 어둡게 복사해 뒤쪽 팔다리로 쓴다."""
+    near = SIDE_VIEWS.get(view)
+    if not near:
+        return {}
+    far = "r" if near == "l" else "l"
+    return {f"{p}_{near}": f"{p}_{far}" for p in LIMB_PARTS}
+
 
 # 그리는 순서 (큰 수가 앞). rig 파일에서 고칠 수 있다.
 DEFAULT_DEPTH = {
     "front": {"thigh": 1, "shin": 1, "foot": 1, "torso": 2, "head": 3, "upper_arm": 4, "forearm": 4, "hand": 4},
     "back": {"thigh": 1, "shin": 1, "foot": 1, "torso": 2, "head": 3, "upper_arm": 4, "forearm": 4, "hand": 4},
-    "side": {"torso": 3, "head": 4},
+    "left": {"torso": 3, "head": 4},
+    "right": {"torso": 3, "head": 4},
 }
 SIDE_LIMB_DEPTH = {"upper_arm": (0, 5), "forearm": (0, 5), "hand": (0, 5),
-                   "thigh": (1, 2), "shin": (1, 2), "foot": (1, 2)}  # (뒤쪽 _r, 앞쪽 _l)
+                   "thigh": (1, 2), "shin": (1, 2), "foot": (1, 2)}  # (뒤쪽, 앞쪽)
 
 # 자세 인식 모델(COCO 전신 133점) 번호
 KP = {"nose": 0, "eye_l": 1, "eye_r": 2, "ear_l": 3, "ear_r": 4,
@@ -142,7 +155,7 @@ def detect_joints(img, view, threshold):
     def pt(name):
         return np.array(kp[KP[name]], dtype=float)
 
-    if view == "side":
+    if view in SIDE_VIEWS:
         # 겹친 팔다리는 점수가 높은 쪽 하나만 믿고, 왼쪽·오른쪽을 같은 자리로 둔다.
         def pick(part):
             a, b = KP[part + "_l"], KP[part + "_r"]
@@ -172,7 +185,7 @@ def detect_joints(img, view, threshold):
 def default_base_pose(joints, view):
     """T자로 벌린 팔을 아래로 내리는 기본 자세. 팔이 45도보다 많이 벌어져 있을 때만 내린다."""
     pose = {}
-    if view == "side":
+    if view in SIDE_VIEWS:
         return pose
     neck_x = joints["neck"][0]
     for s in ("l", "r"):
@@ -190,8 +203,8 @@ def default_depth(view):
     depth = {}
     for name in BONE_NAMES:
         kind = name.rsplit("_", 1)[0] if name.endswith(("_l", "_r")) else name
-        if view == "side" and kind in SIDE_LIMB_DEPTH:
-            depth[name] = SIDE_LIMB_DEPTH[kind][0 if name.endswith("_r") else 1]
+        if view in SIDE_VIEWS and kind in SIDE_LIMB_DEPTH:
+            depth[name] = SIDE_LIMB_DEPTH[kind][1 if name.endswith("_" + SIDE_VIEWS[view]) else 0]
         else:
             depth[name] = DEFAULT_DEPTH[view][kind]
     return depth
@@ -216,10 +229,46 @@ def cmd_rig(args):
         rig = {"image": path.name, "view": view, "joints": joints,
                "base_pose": default_base_pose(joints, view), "depth": default_depth(view)}
         rig_path = args.character / f"rig_{view}.json"
-        text = json.dumps(rig, indent=2, ensure_ascii=False)
-        text = re.sub(r"\[\s+(-?[\d.]+),\s+(-?[\d.]+)\s+\]", r"[\1, \2]", text)  # 좌표는 한 줄로
-        rig_path.write_text(text, encoding="utf-8")
+        write_rig(rig_path, rig)
         print(f"  {rig_path}  (확인 그림: {save_rig_check(args.character, rig, cfg)})")
+
+
+def write_rig(path, rig):
+    text = json.dumps(rig, indent=2, ensure_ascii=False)
+    text = re.sub(r"\[\s+(-?[\d.]+),\s+(-?[\d.]+)\s+\]", r"[\1, \2]", text)  # 좌표는 한 줄로
+    path.write_text(text, encoding="utf-8")
+
+
+def cmd_mirror(args):
+    """한 방향 그림을 좌우로 뒤집어 다른 방향을 만든다 (예: 왼쪽을 보는 옆 그림 → 오른쪽을 보는 옆 그림).
+    그림·덮개 그림을 뒤집고, rig 의 관절·추가 뼈 좌표를 뒤집는다. 앞뒤 순서는 새 방향의 보이는 쪽에 맞춰 다시 정한다.
+    붙인 물건(칼)은 같은 손에 그대로 두고, 그 손 바로 앞(+0.5)에 그린다 — 오른손잡이는 어느 방향에서도 오른손잡이다.
+    나중에 그 방향 그림을 따로 그려 넣으면 그 그림으로 rig 부터 다시 만들면 된다."""
+    char, src, dst = args.character, args.source, args.target
+    rig = json.loads((char / f"rig_{src}.json").read_text(encoding="utf-8"))
+    img = Image.open(char / rig["image"])
+    w = img.width
+    img.transpose(Image.FLIP_LEFT_RIGHT).save(char / f"{dst}.png")
+    flip = lambda p: [round(w - 1 - p[0], 1), p[1]]
+
+    out = {k: v for k, v in rig.items() if k not in ("joints", "extra_bones", "layers", "attachments", "depth")}
+    out.update(image=f"{dst}.png", view=dst, joints={n: flip(p) for n, p in rig["joints"].items()})
+    depth = default_depth(dst)
+    out["extra_bones"] = [{**e, "start": flip(e["start"]), "end": flip(e["end"])} for e in rig.get("extra_bones", [])]
+    out["depth"] = depth
+    layers = []
+    for layer in rig.get("layers", []):
+        name = layer["image"].replace(f"_{src}", f"_{dst}")
+        Image.open(char / layer["image"]).transpose(Image.FLIP_LEFT_RIGHT).save(char / name)
+        layers.append({**layer, "image": name})
+    if layers:
+        out["layers"] = layers
+    if rig.get("attachments"):
+        out["attachments"] = [{**a, "depth": depth.get(a["bone"], 4) + 0.5} for a in rig["attachments"]]
+    write_rig(char / f"rig_{dst}.json", out)
+    cfg = load_config(args.config)
+    print(f"  {char / f'{dst}.png'}, {char / f'rig_{dst}.json'}  (확인 그림: {save_rig_check(char, out, cfg)})")
+    print(f"  다음: animate.bat parts {char} --views {dst}")
 
 
 def cmd_check(args):
@@ -322,8 +371,8 @@ class Model:
         step = cfg["mesh_step"]
         alpha = self.texture[..., 3].reshape(size, len(rests), size) >= thr
         self.verts, self.tris = build_mesh(alpha.any(1), step)
-        far = set(FAR_OF.values()) if self.view == "side" else set()
-        skip = far | {a.get("slot", a["name"]) for a in attachments}
+        far_map = far_of(self.view)
+        skip = set(far_map.values()) | {a.get("slot", a["name"]) for a in attachments}
         self.weights = skin_weights(self.verts, self.tris, self.joints, step, skip, bones)
 
         depth = np.array([depth_of[n] for n in names], float)
@@ -333,12 +382,12 @@ class Model:
         self.tri_src = self.tris  # 텍스처 좌표로 쓸 쉼 자세 점 번호
         self.all_verts, self.all_weights = self.verts, self.weights
 
-        if self.view == "side":
+        if far_map:
             # 보이는 팔다리 삼각형을 복사해 뒤쪽 팔다리 뼈에 붙인다.
             n = len(self.verts)
-            limb = np.isin(dominant, [names.index(b) for b in LIMBS_L])
+            limb = np.isin(dominant, [names.index(b) for b in far_map])
             w2 = self.weights.copy()
-            for near, far_name in FAR_OF.items():
+            for near, far_name in far_map.items():
                 a, b = names.index(near), names.index(far_name)
                 w2[:, b], w2[:, a] = w2[:, a], 0
             copies = self.tris[limb] + n
@@ -541,22 +590,42 @@ def _move(x, y):
 
 def bone_matrices(bones, joints, pose, unit):
     """뼈마다 '쉼 자세 좌표 → 움직인 좌표' 행렬. 회전은 화면에서 시계 방향이 양수(도).
-    len 은 뼈 방향으로 늘이고 줄이는 비율, x/y 는 64칸 기준 픽셀 단위 이동 (unit = 그리기 픽셀 / 64칸 기준 픽셀)."""
+    len 은 뼈 방향으로 늘이고 줄이는 비율, x/y 는 캐릭터 키 48 기준 칸 단위 이동 (unit = 그리기 픽셀 / 그 1칸).
+    tilt 는 보는 사람 쪽(+)/반대쪽(-)으로 기울인 각도(도) — 뼈 방향으로 cos(tilt) 만큼 짧아져 보인다.
+    turn 은 뼈를 제 축으로 돌린 각도(도) — 뼈와 수직 방향으로 cos(turn) 만큼 좁아져 보인다.
+    tilt·turn 은 그 뼈의 모양만 줄이고, 자식 뼈는 모양은 그대로 둔 채 붙는 자리만 따라온다
+    (상체를 숙이면 머리는 내려오지만 납작해지지 않는다). len 은 예전처럼 자식에게도 이어진다."""
     root = pose.get("root", {})
     # root 는 몸 전체: x/y 로 옮기고, rot 로 몸통 가운데(골반과 목의 중간)를 중심으로 돌린다 (구르기 등)
     center = (joints["pelvis"] + joints["neck"]) / 2
     root_m = (_move(root.get("x", 0) * unit, root.get("y", 0) * unit) @ _move(*center)
               @ _rot(root.get("rot", 0)) @ _move(-center[0], -center[1]))
-    mats = {}
+    mats, chain = {}, {}   # mats: 그 뼈를 그릴 행렬, chain: 자식이 이어받을 행렬 (tilt·turn 모양 줄임이 빠짐)
     for name, parent, j0, j1 in bones:
         p = pose.get(name, {})
         s, e = joints[j0], joints[j1]
         a = math.degrees(math.atan2(e[1] - s[1], e[0] - s[0]))
+        if parent:
+            # 부모의 모양 줄임 때문에 옮겨진 붙는 자리만큼 옮겨서 이어받는다
+            held = mats[parent] @ [*s, 1] - chain[parent] @ [*s, 1]
+            base = _move(held[0], held[1]) @ chain[parent]
+        else:
+            base = root_m
         stretch = _rot(a) @ np.diag([p.get("len", 1.0), 1, 1]) @ _rot(-a)
-        local = (_move(p.get("x", 0) * unit, p.get("y", 0) * unit) @ _move(*s) @ _rot(p.get("rot", 0))
-                 @ stretch @ _move(-s[0], -s[1]))
-        mats[name] = (mats[parent] if parent else root_m) @ local
+        foreshort = _rot(a) @ np.diag([math.cos(math.radians(p.get("tilt", 0))),
+                                       math.cos(math.radians(p.get("turn", 0))), 1]) @ _rot(-a)
+        head = _move(p.get("x", 0) * unit, p.get("y", 0) * unit) @ _move(*s) @ _rot(p.get("rot", 0)) @ stretch
+        chain[name] = base @ head @ _move(-s[0], -s[1])
+        mats[name] = base @ head @ foreshort @ _move(-s[0], -s[1])
     return mats
+
+
+def z_offsets(bones, pose):
+    """뼈마다 앞뒤 순서 이동값 z (자식은 부모의 z 를 이어받아 더한다). 조각을 쌓는 순서 = depth + z."""
+    out = {}
+    for name, parent, _, _ in bones:
+        out[name] = pose.get(name, {}).get("z", 0) + (out[parent] if parent else 0)
+    return out
 
 
 def rasterize(dst, src, tris, tri_src, tint, texture, size, thr):
@@ -617,8 +686,12 @@ def compose(pix, prio, rgba, size):
 
 # ---------------------------------------------------------------- 동작
 
-def load_anim(path, anims_dir):
+def load_anim(path, anims_dir, view=None):
+    """동작 파일을 읽는다. common/ 폴더의 공통 동작이면 view 방향의 동작으로 바꿔 돌려준다."""
     data = json.loads(Path(path).read_text(encoding="utf-8"))
+    if Path(path).parent.name == "common":
+        import common_anim
+        data = common_anim.view_anim(data, view)
     if "mirror_of" in data:
         # 좌우를 뒤집은 동작: 회전과 x 이동의 부호를 바꾼다 (예: 앞 그림 동작을 뒤 그림에 쓰기)
         base = load_anim(anims_dir / f"{data['mirror_of']}.json", anims_dir)
@@ -628,12 +701,48 @@ def load_anim(path, anims_dir):
     data.setdefault("frames", 8)
     data.setdefault("fps", 10)
     data.setdefault("loop", True)
+    data.setdefault("interp", "ease")
     return data
+
+
+def anim_files(anims_dir, view):
+    """이 방향에서 만들 동작 {이름: 파일}. 같은 이름의 공통 동작(common/)이 있으면 공통 동작을 쓴다."""
+    files = {p.stem: p for p in sorted((anims_dir / view).glob("*.json"))}
+    for p in sorted((anims_dir / "common").glob("*.json")):
+        files[p.stem] = p
+    return dict(sorted(files.items()))
+
+
+def anim_path(anims_dir, key):
+    """'front/attack' 같은 이름 → 파일. 공통 동작이 있으면 그 파일."""
+    view, name = key.split("/")
+    common = anims_dir / "common" / f"{name}.json"
+    return common if common.exists() else anims_dir / view / f"{name}.json"
+
+
+def frame_times(anim):
+    """프레임마다의 동작 시각 (0~1). 반복 동작은 끝 프레임이 처음과 겹치지 않게 i/n, 아니면 i/(n-1)."""
+    n = anim["frames"]
+    return [i / n if anim["loop"] else i / max(1, n - 1) for i in range(n)]
+
+
+def frame_durations(anim):
+    """프레임마다 머무는 시간(ms). frame_ms 가 없으면 fps 로 고르게."""
+    n = anim["frames"]
+    ms = anim.get("frame_ms")
+    if ms is None:
+        return [round(1000 / anim["fps"])] * n
+    if isinstance(ms, (int, float)):
+        return [int(ms)] * n
+    if len(ms) != n:
+        sys.exit(f"frame_ms 개수({len(ms)})가 frames({n})와 다릅니다")
+    return [int(v) for v in ms]
 
 
 def mirror_keys(keys):
     """좌우를 뒤집은 열쇠 프레임: 회전과 x 이동의 부호를 바꾼다."""
-    return {bone: {ch: [[t, -v if ch in ("rot", "x") else v] for t, v in vals] for ch, vals in chans.items()}
+    return {bone: {ch: [[k[0], -k[1] if ch in ("rot", "x") else k[1], *k[2:]] for k in vals]
+                   for ch, vals in chans.items()}
             for bone, chans in keys.items()}
 
 
@@ -645,13 +754,21 @@ def frame_setup(anim, models, view, t):
         if s["from"] <= t < s["to"] and s["view"] in models:
             m = models[s["view"]]
             keys = mirror_keys(anim["keys"]) if s.get("mirror") else anim["keys"]
-            pose = pose_at({"keys": keys}, m.base_pose, t)
+            pose = anim_pose({**anim, "keys": keys}, m, t)
             for bone, chans in s.get("add", {}).items():
                 p = pose.setdefault(bone, {})
                 for ch, v in chans.items():
                     p[ch] = p.get(ch, 1.0) * v if ch == "len" else p.get(ch, 0.0) + v
             return m, pose
-    return models[view], pose_at(anim, models[view].base_pose, t)
+    return models[view], anim_pose(anim, models[view], t)
+
+
+def anim_pose(anim, model, t):
+    """이 모델로 그릴 시각 t 의 자세. 공통 동작이면 그 방향으로 바꾼 자세 위에 방향별 2D 값을 더한다."""
+    if "common" in anim:
+        import common_anim
+        return pose_at(anim, common_anim.convert(anim, model, t), t)
+    return pose_at(anim, model.base_pose, t)
 
 
 TRAIL_INNER = 0.35                 # 칼날의 손잡이 쪽 35%는 궤적에서 뺀다 (반달 모양이 되게)
@@ -683,10 +800,10 @@ def weapon_trail(anim, models, view, t0, t1, size, spin):
 
 def sample(keys, t):
     """열쇠 프레임 [[시간(0~1), 값], ...] 사이를 부드럽게 잇는다."""
-    keys = sorted(keys)
+    keys = sorted(keys, key=lambda k: k[0])
     if t <= keys[0][0]:
         return keys[0][1]
-    for (t0, v0), (t1, v1) in zip(keys, keys[1:]):
+    for (t0, v0, *_), (t1, v1, *_) in zip(keys, keys[1:]):
         if t <= t1:
             u = (t - t0) / (t1 - t0) if t1 > t0 else 1.0
             u = u * u * (3 - 2 * u)
@@ -694,12 +811,68 @@ def sample(keys, t):
     return keys[-1][1]
 
 
+def sample_spline(keys, t, loop):
+    """열쇠 사이를 매끄럽게 이어지는 곡선(Catmull-Rom)으로 잇는다. 열쇠에서 멈추지 않고 흐른다.
+    [시간, 값, "ease"] 처럼 ease 가 붙은 열쇠는 기울기를 0으로 둬서 그 자리에서 멈췄다 출발한다.
+    반복 동작은 처음과 끝 열쇠의 기울기를 반대편 열쇠로 이어서 정한다. 편집기(editor/editor.js)와 똑같이 계산한다."""
+    keys = sorted(keys, key=lambda k: k[0])
+    n = len(keys)
+    if n == 1 or t <= keys[0][0] and not loop:
+        return keys[0][1]
+    if t >= keys[-1][0] and not loop:
+        return keys[-1][1]
+    ts = [k[0] for k in keys]
+    vs = [k[1] for k in keys]
+
+    def neighbor(i):  # (시각, 값). 반복이면 반대편으로 이어 붙인다 (0 과 1 열쇠가 같은 자리면 하나 건너뛴다)
+        if 0 <= i < n:
+            return ts[i], vs[i]
+        if not loop:
+            return None
+        same = n > 1 and abs(ts[0] - (ts[-1] - 1)) < 1e-9
+        if i < 0:
+            j = n + i - (1 if same else 0)
+            return ts[j] - 1, vs[j]
+        j = i - n + (1 if same else 0)
+        return ts[j] + 1, vs[j]
+
+    def tangent(i):
+        if len(keys[i]) > 2 and keys[i][2] == "ease":
+            return 0.0
+        a, b = neighbor(i - 1), neighbor(i + 1)
+        if a is None or b is None:
+            return 0.0
+        return (b[1] - a[1]) / (b[0] - a[0]) if b[0] != a[0] else 0.0
+
+    if loop and (t < ts[0] or t > ts[-1]):  # 반복 동작에서 첫 열쇠 앞이나 끝 열쇠 뒤
+        t0, v0, i0 = ts[-1] - 1, vs[-1], n - 1
+        t1, v1, i1 = ts[0], vs[0], 0
+        if t > ts[-1]:
+            t0, t1 = ts[-1], ts[0] + 1
+        m0, m1 = tangent(i0), tangent(i1)
+    else:
+        i0 = max(i for i in range(n) if ts[i] <= t)
+        if i0 == n - 1:
+            return vs[-1]
+        i1 = i0 + 1
+        t0, v0, t1, v1 = ts[i0], vs[i0], ts[i1], vs[i1]
+        m0, m1 = tangent(i0), tangent(i1)
+    h = t1 - t0
+    if h <= 0:
+        return v1
+    u = (t - t0) / h
+    return ((2 * u ** 3 - 3 * u ** 2 + 1) * v0 + (u ** 3 - 2 * u ** 2 + u) * h * m0
+            + (-2 * u ** 3 + 3 * u ** 2) * v1 + (u ** 3 - u ** 2) * h * m1)
+
+
 def pose_at(anim, base_pose, t):
+    """기본 자세 + 동작 값. interp 가 "spline" 이면 이어지는 곡선, 아니면 열쇠마다 감속·가속(예전 방식)."""
+    spline = anim.get("interp") == "spline"
     pose = {bone: dict(chans) for bone, chans in base_pose.items()}
     for bone, chans in anim["keys"].items():
         p = pose.setdefault(bone, {})
         for ch, keys in chans.items():
-            v = sample(keys, t)
+            v = sample_spline(keys, t, anim.get("loop", False)) if spline else sample(keys, t)
             p[ch] = p.get(ch, 1.0) * v if ch == "len" else p.get(ch, 0.0) + v
     return pose
 
@@ -997,15 +1170,15 @@ def cmd_render(args):
     warnings_all = json.loads(warnings_path.read_text(encoding="utf-8")) if warnings_path.exists() else {}
     canvas = cfg["canvas"]
     for view, model in models.items():
-        for anim_path in sorted((anims_dir / view).glob("*.json")):
-            key = f"{view}/{anim_path.stem}"
+        for stem, path in anim_files(anims_dir, view).items():
+            key = f"{view}/{stem}"
             if args.only and key not in args.only:
                 continue
-            anim = load_anim(anim_path, anims_dir)
+            anim = load_anim(path, anims_dir, view)
             n = anim["frames"]
             hi_frames, pix_frames, poses, frame_models, trailed = [], [], [], [], set()
             part_frames = {}  # (층, depth) → {프레임 번호: 그림}
-            times = [i / n if anim["loop"] else i / max(1, n - 1) for i in range(n)]
+            times = frame_times(anim)
             for i, t in enumerate(times):
                 fm, pose = frame_setup(anim, models, view, t)
                 poses.append(pose)
@@ -1034,7 +1207,7 @@ def cmd_render(args):
                 hi_frames.append(hi)
                 pix_frames.append(small)
 
-            name = f"{view}_{anim_path.stem}"
+            name = f"{view}_{stem}"
             warns = frame_warnings(frame_models, poses, hi_frames, anim["loop"], trailed)
             for i, ws in enumerate(warns):
                 for w in ws:
@@ -1046,9 +1219,10 @@ def cmd_render(args):
                 sheet.paste(f, (i * canvas, 0))
             save_image(sheet, out / f"{name}.png")
             gif = [on_gray(f).resize((canvas * 4, canvas * 4), Image.NEAREST).convert("P") for f in pix_frames]
+            durations = frame_durations(anim)
             save_image(gif[0], out / "check" / f"{name}.gif", save_all=True, append_images=gif[1:],
-                       duration=round(1000 / anim["fps"]), loop=0)
-            meta[name] = {"frames": n, "fps": anim["fps"], "loop": anim["loop"],
+                       duration=durations, loop=0)
+            meta[name] = {"frames": n, "fps": anim["fps"], "frame_ms": durations, "loop": anim["loop"],
                           "frame_size": canvas, "pivot": [0.5, cfg["foot_margin"] / canvas]}
             stacked = None
             if args.layers:
@@ -1081,7 +1255,7 @@ def cmd_angles(args):
                 models[view] = Model(args.character, rig, cfg)
     for key in args.motions:
         view = key.split("/")[0]
-        anim = load_anim(args.anims / f"{key}.json", args.anims)
+        anim = load_anim(anim_path(args.anims, key), args.anims, view)
         n = anim["frames"]
         print(f"{key}  (화면 각도: 0=오른쪽, 90=아래, 180=왼쪽, -90=위 / 끝 위치: 캐릭터 키 48 기준 칸)")
         for i in range(n):
@@ -1104,7 +1278,7 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_rig = sub.add_parser("rig", help="관절을 찾아 rig_<방향>.json 을 만든다")
-    p_rig.add_argument("character", type=Path, help="front.png / back.png / side.png 가 든 캐릭터 폴더")
+    p_rig.add_argument("character", type=Path, help="front.png / back.png / left.png / right.png 가 든 캐릭터 폴더")
     p_rig.add_argument("-c", "--config", type=Path, default=HERE / "config.json")
     p_rig.set_defaults(func=cmd_rig)
 
@@ -1112,6 +1286,14 @@ def main():
     p_parts.add_argument("character", type=Path)
     p_parts.add_argument("-c", "--config", type=Path, default=HERE / "config.json")
     p_parts.add_argument("--force", action="store_true", help="이미 있는 조각을 덮어쓴다")
+    p_parts.add_argument("--views", nargs="*", help="이 방향만 (예: right)")
+
+    p_mirror = sub.add_parser("mirror", help="한 방향 그림을 좌우로 뒤집어 다른 방향을 만든다 (예: left right)")
+    p_mirror.add_argument("character", type=Path)
+    p_mirror.add_argument("source", choices=VIEWS)
+    p_mirror.add_argument("target", choices=VIEWS)
+    p_mirror.add_argument("-c", "--config", type=Path, default=HERE / "config.json")
+    p_mirror.set_defaults(func=cmd_mirror)
     p_parts.set_defaults(func=lambda a: __import__("parts").cmd_parts(a))
 
     p_check = sub.add_parser("check", help="고친 rig 파일로 확인 그림만 다시 그린다")

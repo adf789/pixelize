@@ -1,6 +1,6 @@
 {
-  "image": "side.png",
-  "view": "side",
+  "image": "left.png",
+  "view": "left",
   "joints": {
     "shoulder_l": [175.9, 197.9],
     "elbow_l": [190.0, 272.0],
@@ -63,20 +63,20 @@
       "tip": [45, 6],
       "length": 22,
       "angle": 0,
-      "bone": "hand_l",
-      "depth": 5.5
+      "bone": "hand_r",
+      "depth": 0.5
     }
   ],
   "layers": [
     {
       "name": "helmet_iron",
       "slot": "helmet",
-      "image": "helmet_iron_side.png"
+      "image": "helmet_iron_left.png"
     },
     {
       "name": "helmet_gold",
       "slot": "helmet",
-      "image": "helmet_gold_side.png"
+      "image": "helmet_gold_left.png"
     }
   ]
 }

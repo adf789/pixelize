@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>동작 편집기</title>
+<style>
+  :root {
+    --bg: #1d2026; --panel: #262a32; --line: #3a3f4a; --text: #e6e8ec; --dim: #9aa1ad;
+    --accent: #f0a23b; --key: #f0a23b; --anykey: #6b7280; --sel: #4fb3ff; --warn: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 "Malgun Gothic", system-ui, sans-serif; }
+  header { display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 14px; margin: 0 8px 0 0; }
+  select, input, button { font: inherit; color: var(--text); background: #1b1e24; border: 1px solid var(--line); border-radius: 4px; padding: 3px 6px; }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--sel); }
+  button.primary { background: #2f5a87; border-color: #3d73ad; }
+  #status { color: var(--dim); margin-left: auto; }
+  #status.dirty { color: var(--accent); }
+  main { display: grid; grid-template-columns: 1fr 340px; gap: 0; height: calc(100vh - 48px - 150px); }
+  #stageWrap { position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  #stage { background: #2b2f38; image-rendering: auto; cursor: crosshair; max-width: 100%; max-height: 100%; }
+  #stageTools { position: absolute; top: 8px; left: 8px; display: flex; gap: 10px; color: var(--dim); flex-wrap: wrap; }
+  #stageTools label { white-space: nowrap; }
+  #stageHint { position: absolute; bottom: 8px; left: 8px; right: 8px; color: var(--dim); font-size: 12px; }
+  /* 좁은 화면: 무대를 위에, 설정 판을 아래에 쌓는다 */
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; height: auto; }
+    #stageWrap { height: min(100vw, 70vh); padding: 36px 0 44px; }
+    aside { border-left: none; border-top: 1px solid var(--line); }
+  }
+  #views4 { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 6px; }
+  #views4 .v4 { position: relative; cursor: pointer; border: 1px solid var(--line); border-radius: 4px; line-height: 0; }
+  #views4 .v4.cur { border-color: var(--sel); }
+  #views4 .v4 span { position: absolute; left: 4px; top: 8px; line-height: 1; color: var(--dim); font-size: 11px; }
+  #views4 canvas { width: 96px; height: 96px; }
+  #stageWrap.with4 { padding-right: 112px; }
+  @media (max-width: 900px) { #views4 { position: static; transform: none; flex-direction: row; justify-content: center; } #stageWrap { flex-direction: column; } #stageWrap.with4 { padding-right: 0; } }
+  #banner { position: absolute; top: 8px; right: 8px; background: #4a3320; border: 1px solid var(--accent); padding: 6px 8px; border-radius: 4px; display: none; max-width: 340px; }
+  aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 10px; }
+  aside h2 { font-size: 13px; margin: 14px 0 6px; color: var(--dim); font-weight: normal; border-bottom: 1px solid var(--line); padding-bottom: 3px; }
+  .row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+  .row label { width: 64px; color: var(--dim); }
+  .row input[type=number] { width: 80px; }
+  .row input[type=range] { flex: 1; }
+  .keydot { width: 8px; height: 8px; border-radius: 50%; background: transparent; border: 1px solid var(--anykey); }
+  .keydot.on { background: var(--key); border-color: var(--key); }
+  #pixel { image-rendering: pixelated; background: #2b2f38; border: 1px solid var(--line); }
+  #renderImg { max-width: 100%; image-rendering: pixelated; background: #2b2f38; display: block; margin-top: 6px; }
+  #renderLog { white-space: pre-wrap; color: var(--warn); font-size: 12px; max-height: 120px; overflow: auto; }
+  footer { height: 150px; background: var(--panel); border-top: 1px solid var(--line); padding: 8px 12px; overflow-x: auto; }
+  #timeline { display: flex; gap: 4px; margin-top: 6px; }
+  .cell { min-width: 58px; border: 1px solid var(--line); border-radius: 4px; padding: 4px; text-align: center; cursor: pointer; background: #1b1e24; }
+  .cell.cur { border-color: var(--sel); background: #213246; }
+  .cell .num { font-weight: bold; }
+  .cell .dots { height: 10px; display: flex; justify-content: center; gap: 3px; margin: 3px 0; }
+  .cell .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .cell .dot.any { background: var(--anykey); }
+  .cell .dot.sel { background: var(--key); }
+  .cell .dot.ease { outline: 1px solid #fff; }
+  .cell input { width: 50px; text-align: center; padding: 1px; }
+  .cell.swap { box-shadow: inset 0 -3px 0 #8a5cf6; }
+  .cell.trail { box-shadow: inset 0 3px 0 #e8eefc; }
+  .muted { color: var(--dim); font-size: 12px; }
+  kbd { border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; font-size: 11px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>동작 편집기</h1>
+  <span id="charName" class="muted"></span>
+  <select id="viewSel" title="방향"></select>
+  <select id="animSel" title="동작"></select>
+  <button id="newBtn">새 동작</button>
+  <button id="undoBtn" title="되돌리기 (Ctrl+Z)" disabled>↶</button>
+  <button id="redoBtn" title="다시 하기 (Ctrl+Y)" disabled>↷</button>
+  <button id="saveBtn">저장</button>
+  <button id="renderBtn" class="primary">픽셀로 만들기</button>
+  <span id="status">불러오는 중…</span>
+</header>
+<main>
+  <div id="stageWrap">
+    <div id="stageTools">
+      <label><input type="checkbox" id="showBones" checked> 뼈</label>
+      <label><input type="checkbox" id="showOnion"> 앞뒤 프레임 겹쳐 보기</label>
+      <label><input type="checkbox" id="showGround" checked> 바닥선</label>
+    </div>
+    <div id="banner"></div>
+    <div id="views4" style="display:none" title="네 방향 같은 프레임 (누르면 그 방향으로)"></div>
+    <canvas id="stage" width="672" height="672"></canvas>
+    <div id="stageHint">
+      뼈 클릭 → 고르기 · 끌기 → 돌리기 · <kbd>Shift</kbd>+끌기 → 몸 전체 옮기기 · <kbd>Alt</kbd>+위아래 끌기 → 앞뒤로 기울이기 ·
+      <kbd>←</kbd><kbd>→</kbd> 프레임 · <kbd>Space</kbd> 재생 · <kbd>K</kbd> 열쇠 넣기 · <kbd>Del</kbd> 열쇠 지우기 ·
+      <kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기 · <kbd>Ctrl</kbd>+<kbd>Y</kbd> 다시 하기
+    </div>
+  </div>
+  <aside>
+    <h2>고른 뼈</h2>
+    <div class="row"><label>뼈</label><select id="boneSel" style="flex:1"></select></div>
+    <div id="chanRows"></div>
+    <div class="row">
+      <button id="keyBtn" title="K">열쇠 넣기</button>
+      <button id="delKeyBtn" title="Delete">열쇠 지우기</button>
+      <label style="width:auto"><input type="checkbox" id="easeChk"> 여기서 멈춤(ease)</label>
+    </div>
+    <p class="muted" id="commonHelp" style="display:none">네 방향 공통 동작: 한 번 움직이면 앞·뒤·왼쪽·오른쪽이 모두 따라갑니다.
+      앞·뒤 그림에서 끌면 spread(옆으로 벌리기), 옆 그림에서 끌면 swing(앞뒤로 휘두르기)이 바뀝니다.
+      <kbd>Alt</kbd>+위아래 끌기는 그 반대 채널(보는 쪽으로 +). twist = 제 축으로 비틀기.
+      궤적 프레임은 방향마다 따로 저장됩니다. 칸 이름에 마우스를 올리면 설명이 나옵니다.</p>
+    <p class="muted" id="chanHelp">값은 기본 자세 위에 더해집니다 (len 은 곱함). 회전은 화면에서 시계 방향이 +.
+      tilt = 앞뒤 기울기(뼈 방향으로 짧아짐), turn = 제 축으로 돌리기(폭이 좁아짐), z = 앞뒤 순서. 셋 다 딸린 뼈에 이어집니다.
+      칸 이름에 마우스를 올리면 설명이 나옵니다.</p>
+
+    <h2>동작 설정</h2>
+    <div class="row"><label>프레임 수</label><input type="number" id="framesIn" min="1" max="64"></div>
+    <div class="row"><label>반복</label><input type="checkbox" id="loopIn"></div>
+    <div class="row"><label>곡선</label>
+      <select id="interpIn"><option value="spline">이어지는 곡선 (spline)</option><option value="ease">열쇠마다 멈춤 (ease, 예전)</option></select></div>
+    <div class="row"><label>모든 프레임</label><input type="number" id="allMsIn" min="10" max="2000" placeholder="ms"><button id="allMsBtn">적용</button></div>
+    <div class="row"><label>궤적 프레임</label><input type="text" id="trailIn" placeholder="예: 7, 8" style="flex:1"></div>
+    <p class="muted" id="swapInfo"></p>
+
+    <h2>64칸 대략 미리 보기</h2>
+    <canvas id="pixel" width="288" height="288"></canvas>
+    <p class="muted">팔레트·외곽선 없이 칸만 나눈 모습입니다. 정확한 결과는 "픽셀로 만들기".</p>
+
+    <h2>픽셀 결과</h2>
+    <div id="renderLog" class="muted">아직 없음</div>
+    <img id="renderImg" alt="">
+  </aside>
+</main>
+<footer>
+  <div class="row">
+    <button id="playBtn">▶ 재생</button>
+    <span class="muted" id="timeInfo"></span>
+  </div>
+  <div id="timeline"></div>
+</footer>
+<script src="/static/editor.js"></script>
+</body>
+</html>

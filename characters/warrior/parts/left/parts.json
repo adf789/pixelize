@@ -1,6 +1,6 @@
 {
-  "view": "side",
-  "image": "side.png",
+  "view": "left",
+  "image": "left.png",
   "parts": [
     {
       "name": "cape",

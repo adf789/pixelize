@@ -1,6 +1,6 @@
 ---
 name: sprite-animate
-description: T자 캐릭터 일러스트(front/back/side.png)에 뼈대를 심고 걷기·뛰기·공격 같은 동작을 만들어 64칸 픽셀 스프라이트 시트로 뽑는다. 관절 확인 그림을 보고 rig JSON을 고치고, 동작 JSON을 쓰고, 결과 확인 그림을 보며 고치기를 반복한다. 트리거: 스프라이트 애니메이션 만들어줘, 걷기/공격 동작 뽑아줘, 캐릭터 픽셀 애니메이션, /sprite-animate
+description: T자 캐릭터 일러스트(front/back/left.png)에 뼈대를 심고 걷기·뛰기·공격 같은 동작을 만들어 64칸 픽셀 스프라이트 시트로 뽑는다. 관절 확인 그림을 보고 rig JSON을 고치고, 동작 JSON을 쓰고, 결과 확인 그림을 보며 고치기를 반복한다. 트리거: 스프라이트 애니메이션 만들어줘, 걷기/공격 동작 뽑아줘, 캐릭터 픽셀 애니메이션, /sprite-animate
 ---
 
 # sprite-animate
@@ -10,8 +10,9 @@ description: T자 캐릭터 일러스트(front/back/side.png)에 뼈대를 심�
 
 ## 0. 준비 확인
 
-- 캐릭터 폴더: `characters/<이름>/front.png`, `back.png`, `side.png` (있는 것만 처리)
-  - 앞·뒤는 팔을 벌린 T자 자세, 옆은 팔을 내려도 된다. 옆 그림은 왼쪽을 보게 한다.
+- 캐릭터 폴더: `characters/<이름>/front.png`, `back.png`, `left.png` (있는 것만 처리)
+  - 앞·뒤는 팔을 벌린 T자 자세, 옆은 팔을 내려도 된다. 옆 그림은 왼쪽을 보게 하고 `left.png` 로 둔다.
+  - 오른쪽 그림(`right.png`)은 왼쪽 rig·조각을 다 고친 뒤 `animate.bat mirror characters/<이름> left right` → `animate.bat parts characters/<이름> --views right` 로 만든다.
   - 단색 배경. 아래 "Front" 같은 글자는 자동으로 지워진다.
 - 사용자가 다른 이름으로 그림을 줬으면 이 이름으로 **복사**한다 (원본은 건드리지 않는다).
 
@@ -49,7 +50,7 @@ animate.bat rig characters/<이름>
   - `bone` 위 `at`(기본 0.5) 자리에 손잡이가 오고, 뼈 방향에서 `angle`도(시계 방향 양수) 돌린 쪽으로 끝이 향한다.
   - `length`: 손잡이→끝 길이를 최종 픽셀(64칸 기준)로. `depth`: 앞뒤 순서 (뒤 그림에서는 몸 뒤라 작게).
   - 붙인 물건은 `name` 으로 동작에서 뼈처럼 돌릴 수 있다 (손목 꺾기). 확인 그림에는 흰 네모로 보인다.
-  - 앞·뒤는 같은 손(예: `hand_r`), 옆은 보이는 손 `hand_l` 에 붙인다.
+  - 모든 방향에서 같은 손(`hand_r`)에 붙인다. 왼쪽 그림에서는 뒤쪽 손이라 `depth` 를 몸 뒤(0.5)로 둔다 (`mirror` 가 오른쪽 그림에서는 몸 앞으로 바꿔 준다).
 - 갑옷·투구·옷처럼 **몸에 딱 붙어 같이 휘는 장비**는 → `layers` 에 덮개 그림을 넣는다.
   ```json
   "layers": [
@@ -84,7 +85,28 @@ animate.bat parts characters/<이름>          # 이미 있으면 건너뜀. 다
 
 ## 3. 동작 쓰기
 
-`anims/<방향>/<동작>.json`. 이미 있는 idle / walk / run / attack / attack2 / skill / roll / dash 를 본보기로 삼는다.
+**먼저 `docs/motion_design.md` 의 몸놀림 설계를 읽고 따른다.** 단계(준비·휘두름·뻗음·회복 등)와 프레임별 시간이 정해져 있다.
+- 새 동작은 `"interp": "spline"` 과 `"frame_ms": [...]` 를 쓴다. 멈춰야 하는 열쇠(정점, 뻗음)만 `[시각, 값, "ease"]`.
+- 자연스러움은 정지 그림으로 판단하기 어렵다. 초안을 만든 뒤 사용자에게 **편집기(`editor.bat`)로 재생해 보고 다듬어 달라고** 한다.
+  사용자가 저장하면 그 파일로 `render` 해서 검사·시트를 만든다.
+
+**새 동작은 네 방향 공통으로 `anims/common/<동작>.json` 에 한 번만 쓴다.** 앞·뒤·왼쪽·오른쪽이 모두 같은 몸놀림을 따른다 (README "네 방향 공통 동작").
+```json
+{
+  "frames": 16, "loop": false, "interp": "spline", "frame_ms": [...],
+  "keys": {
+    "root":        {"swing": [[0, 0], [0.5, 15]]},
+    "upper_arm_r": {"swing": [[0, 0], [0.4, 160], [0.7, 20]], "spread": [[0, 0], [0.4, 20]]}
+  },
+  "views": {"front": {"trail": [9]}, "left": {"trail": [9]}}
+}
+```
+- `swing` = 앞뒤로 휘두르기 (팔다리 끝이 앞으로 +, 몸통·머리·root 는 앞으로 숙이기 +), `spread` = 옆으로 벌리기 (팔다리 바깥쪽 +), `twist` = 제 축으로 비틀기, `len`. `root` 는 `x`(캐릭터 왼쪽)/`y`(아래)/`fwd`(앞) 이동도.
+- 방향마다 다른 값(궤적 프레임, `view_swap`, 그 방향만 더할 2D `keys`)은 `views.<방향>` 에 넣는다.
+- 확인은 네 방향 모두 한다 (`--only front/<동작> back/<동작> left/<동작> right/<동작>`).
+
+예전 방향별 동작 `anims/<방향>/<동작>.json` 도 그대로 쓸 수 있다 (같은 이름의 공통 동작이 있으면 공통 동작이 이긴다). 아래는 방향별 형식이다.
+이미 있는 idle / walk / run / attack / attack2 / skill / roll / dash 를 본보기로 삼는다.
 앞 그림 한 장으로는 앞으로 공중제비 도는 모습(머리 꼭대기·등이 보이는 프레임)을 만들 수 없다. 앞·뒤 구르기는 몸을 공처럼 웅크리는 것으로 표현한다.
 
 ```json
@@ -98,6 +120,7 @@ animate.bat parts characters/<이름>          # 이미 있으면 건너뜀. 다
 ```
 
 - 열쇠 프레임은 `[시간 0~1, 값]`. 사이는 부드럽게 이어진다. 반복 동작은 `1` 의 값을 `0` 과 같게 둔다.
+- 보는 사람 쪽(z축) 움직임: `tilt` (앞뒤로 기울이기, 뼈 방향으로 짧아짐 — 앞 그림에서 상체 숙이기), `turn` (제 축으로 돌리기, 폭이 좁아짐 — 몸통 비틀기), `z` (앞뒤 순서, 자식도 함께 — 팔을 몸 뒤로). tilt·turn 은 그 뼈 모양만 줄이고 자식은 자리만 따라온다.
 - 채널: `rot` (도, **화면에서 시계 방향이 양수**), `len` (뼈 방향 늘이기 비율, 1=그대로), `x`/`y` (**키 48칸 캐릭터의 1칸**. 칸(`frame`)을 키워도 그대로이고, `char_height` 를 바꾸면 함께 늘고 준다 — 붙인 물건의 `length` 도 같다).
 - 값은 `base_pose` 위에 더해진다 (`len` 은 곱해진다).
 - 뼈: `root`(몸 전체. `x`/`y` 로 옮기고 `rot` 으로 몸통 가운데를 중심으로 돌린다 — 구르기는 옆에서 `rot` 0 → -360), `torso`, `head`, `upper_arm_l/r`, `forearm_l/r`, `hand_l/r`, `thigh_l/r`, `shin_l/r`, `foot_l/r`, 그리고 rig 의 추가 뼈와 붙인 물건(`sword` 등). 그 방향 rig 에 없는 뼈는 무시된다.
@@ -117,7 +140,7 @@ animate.bat parts characters/<이름>          # 이미 있으면 건너뜀. 다
 - 다리를 `len` 으로 줄이면 발이 골반 쪽으로 올라가 떠 보인다. 그만큼 `root` `y` 로 몸을 내린다. 시트에서 프레임마다 맨 아래 픽셀 줄을 재서 0번 프레임과 맞춘다.
 - 방향 감각:
   - 앞: 캐릭터 오른쪽(`_r`)이 화면 왼쪽. `upper_arm_r` 양수 = 바깥(화면 왼쪽)으로 들어 올림. 앞 그림에서 다리를 드는 건 `len` 을 줄여서 표현한다.
-  - 옆(왼쪽을 봄): 팔다리 양수 = 앞으로, 몸통 음수 = 앞으로 숙임, 망토 음수 = 뒤로 날림.
+  - 왼쪽(left, 왼쪽을 봄): 팔다리 양수 = 앞으로, 몸통 음수 = 앞으로 숙임, 망토 음수 = 뒤로 날림. 오른쪽(right)은 부호가 반대.
   - 뒤: 보통 앞 동작을 좌우로 뒤집어 쓴다 → `{"mirror_of": "front/walk"}`
 - 64칸에서는 1칸보다 작은 움직임이 안 보인다. 몸 위아래 흔들림은 1~2칸으로 준다.
 
@@ -125,7 +148,7 @@ animate.bat parts characters/<이름>          # 이미 있으면 건너뜀. 다
 
 ```
 animate.bat render characters/<이름> -o output/<이름>
-animate.bat render characters/<이름> -o output/<이름> --only side/attack front/walk   # 일부만 빠르게
+animate.bat render characters/<이름> -o output/<이름> --only left/attack front/walk   # 일부만 빠르게
 animate.bat render characters/<이름> -o output/<이름> --layers   # 장비 바꿔 끼우기용 층 시트도 만든다
 ```
 
@@ -142,7 +165,7 @@ animate.bat render characters/<이름> -o output/<이름> --layers   # 장비 �
    - 들어 올리는 중간 프레임이 베는 프레임과 비슷하면 안 된다 (같은 쪽으로 같은 높이에 뻗지 않는다).
    - **회전값을 머릿속으로 더해 자세를 짐작하지 않는다.** 서 있을 때도 아래팔·무기는 위팔보다 20도쯤 바깥으로 기울어 있어서 "회전 0 = 똑바로 아래"가 아니다. 원하는 화면 각도를 정하고, 아래로 실제 각도를 재서 맞춘다:
      ```
-     animate.bat angles characters/<이름> front/attack side/skill
+     animate.bat angles characters/<이름> front/attack left/skill
      ```
      프레임마다 위팔·아래팔·무기의 화면 각도(0=오른쪽, 90=아래, 180=왼쪽, -90=위)와 무기 끝 위치가 나온다.
    - 다 만든 뒤 **프레임마다 "의도한 단계 / 실제로 보이는 자세"를 표로 적어** 비교한다. 다르면 고친다.

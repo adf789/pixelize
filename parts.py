@@ -22,13 +22,12 @@ import animate as an
 import pixelize as px
 
 # 골반 조각: 몸통을 숙여도 허리띠·앞치마가 끌려가지 않도록 몸통에서 떼어 낸다.
-HIPS_DEPTH = {"front": 1.5, "back": 1.5, "side": 2.5}
+HIPS_DEPTH = {"front": 1.5, "back": 1.5, "left": 2.5, "right": 2.5}
 FILL_COLOR = (255, 60, 200)
 CAP_COLOR = (60, 200, 255)
 LIMBS = [f"{p}_{s}" for s in ("l", "r") for p in ("upper_arm", "forearm", "hand", "thigh", "shin", "foot")]
 LIMB_REACH = 1.5      # 팔다리 조각은 뼈에서 (굵기의 반 × 이만큼) 안쪽만 가진다 (어깨 옆 망토가 팔에 붙지 않게)
 HULL_PARTS = ("torso", "hips")  # 몸통처럼 통통한 조각은 볼록 껍질 안쪽의 가려진 곳까지 채운다
-SIDE_NEAR_ARM = ["upper_arm_l", "forearm_l", "hand_l"]  # 옆 그림에서 몸통 위에 겹쳐 그려진 팔
 CRUMB_RATIO = 0.2     # 한 조각에서 가장 큰 덩어리의 이 비율보다 작은 떨어진 부스러기는 이웃 조각에 붙인다
 
 
@@ -164,7 +163,9 @@ def make_parts(char_dir, rig, cfg):
     f = float(np.linalg.norm(model.to_canvas([1, 0]) - model.to_canvas([0, 0])))  # 원본 → 캔버스 배율
     depth = np.array([depth_of[n] for n in names], float)
     reach = {names.index(b): hw[b] * LIMB_REACH * f for b in LIMBS if b in names}
-    override = {names.index(b): hw[b] * f for b in SIDE_NEAR_ARM} if rig["view"] == "side" else {}
+    # 옆 그림에서 몸통 위에 겹쳐 그려진 (보이는 쪽) 팔은 팔 굵기 안쪽을 팔 조각으로 가져온다
+    near = an.SIDE_VIEWS.get(rig["view"])
+    override = {names.index(f"{p}_{near}"): hw[f"{p}_{near}"] * f for p in ("upper_arm", "forearm", "hand")} if near else {}
     dense = canvas_labels(model, cfg["mesh_step"], thr, depth, reach, override)
     labels = merge_crumbs(source_labels(model, dense, img, thr))
     present = [i for i in range(len(names)) if (labels == i).any()]
@@ -296,10 +297,11 @@ class PartModel:
             self.pieces.append({"bone": bone, "depth": depth, "layer": layer, "rest": rest,
                                 "tex": _premultiplied(tex, tint)})
 
+        far_map = an.far_of(self.view)
         for name, im in part_imgs.items():
             add(im, name, part_depth[name], 0)
-            if self.view == "side" and name in an.FAR_OF:
-                add(im, an.FAR_OF[name], depth_of[an.FAR_OF[name]], 0, tint=True)
+            if name in far_map:
+                add(im, far_map[name], depth_of[far_map[name]], 0, tint=True)
 
         # 덮개 층: 원본에서 맨 위에 보이는 조각(없으면 가장 가까운 조각)을 따라 나눈다.
         owner = np.full(img.size[::-1], -1, int)
@@ -323,8 +325,8 @@ class PartModel:
                 piece = la.copy()
                 piece[(owner != i) | (la[..., 3] == 0)] = 0
                 add(Image.fromarray(piece), n, part_depth[n], li)
-                if self.view == "side" and n in an.FAR_OF:
-                    add(Image.fromarray(piece), an.FAR_OF[n], depth_of[an.FAR_OF[n]], li, tint=True)
+                if n in far_map:
+                    add(Image.fromarray(piece), far_map[n], depth_of[far_map[n]], li, tint=True)
 
         # 붙인 물건: 그림 속 grip→tip 방향을 손잡이→끝 방향에 맞춘다.
         self.attach_images = []
@@ -355,19 +357,24 @@ class PartModel:
         return sorted({p["depth"] for p in self.pieces})
 
     def render(self, pose, parts=False):
-        """slot 마다 첫 번째 층을 합친 그림. parts=True 면 (층 번호, depth) 마다 따로 그린 그림도 함께 돌려준다."""
+        """slot 마다 첫 번째 층을 합친 그림. parts=True 면 (층 번호, depth) 마다 따로 그린 그림도 함께 돌려준다.
+        쌓는 순서는 depth + z (동작의 z 값. 자식은 부모의 z 를 이어받는다)."""
         mats = an.bone_matrices(self.bones, self.joints, pose, self.unit)
+        z = an.z_offsets(self.bones, pose)
+        order = sorted(range(len(self.pieces)), key=lambda i: (self.pieces[i]["depth"] + z.get(self.pieces[i]["bone"], 0),
+                                                              self.pieces[i]["layer"], i))
         size = self.size
         combined = np.zeros((size, size, 4), np.float32)
         groups = {}
-        for p in self.pieces:
+        for i in order:
+            p = self.pieces[i]
             m = (mats[p["bone"]] @ p["rest"])[:2]
             warped = cv2.warpAffine(p["tex"], m, (size, size), flags=cv2.INTER_LINEAR,
                                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
             if p["layer"] in self.default_layers:
                 combined = warped + combined * (1 - warped[..., 3:4])
             if parts:
-                key = (p["layer"], p["depth"])
+                key = (p["layer"], p["depth"] + z.get(p["bone"], 0))
                 acc = groups.get(key)
                 groups[key] = warped if acc is None else warped + acc * (1 - warped[..., 3:4])
         if not parts:
@@ -425,7 +432,7 @@ def cmd_parts(args):
     cfg = an.load_config(args.config)
     for view in an.VIEWS:
         rig_path = args.character / f"rig_{view}.json"
-        if not rig_path.exists():
+        if not rig_path.exists() or (args.views and view not in args.views):
             continue
         out_dir = args.character / "parts" / view
         if out_dir.exists() and any(out_dir.iterdir()) and not args.force:
