@@ -1,0 +1,104 @@
+{
+  "image": "front_left.png",
+  "view": "front_left",
+  "joints": {
+    "shoulder_l": [319.8, 234.3],
+    "elbow_l": [383.0, 353.6],
+    "wrist_l": [428.6, 457.1],
+    "hip_l": [283.0, 448.3],
+    "knee_l": [330.4, 683.5],
+    "ankle_l": [369.0, 887.0],
+    "toe_l": [386.5, 974.7],
+    "hand_tip_l": [446.9, 498.5],
+    "shoulder_r": [184.7, 237.8],
+    "elbow_r": [146.1, 355.4],
+    "wrist_r": [81.2, 458.9],
+    "hip_r": [195.3, 443.1],
+    "knee_r": [161.9, 692.2],
+    "ankle_r": [147.9, 894.0],
+    "toe_r": [83.0, 960.7],
+    "hand_tip_r": [55.3, 500.3],
+    "pelvis": [239.1, 445.7],
+    "neck": [252.3, 236.0],
+    "head_center": [240.9, 146.6]
+  },
+  "base_pose": {},
+  "depth": {
+    "torso": 2,
+    "head": 3,
+    "upper_arm_l": 4,
+    "forearm_l": 4,
+    "hand_l": 4,
+    "upper_arm_r": 1.5,
+    "forearm_r": 1.5,
+    "hand_r": 1.5,
+    "thigh_l": 1,
+    "shin_l": 1,
+    "foot_l": 1,
+    "thigh_r": 0.8,
+    "shin_r": 0.8,
+    "foot_r": 0.8
+  },
+  "extra_bones": [
+    {
+      "name": "cape_r",
+      "parent": "torso",
+      "start": [180, 250],
+      "end": [95, 720],
+      "depth": 0,
+      "claim": {
+        "hue": [-15, 12],
+        "box": [
+          30,
+          380,
+          215,
+          770
+        ]
+      }
+    },
+    {
+      "name": "cape_l",
+      "parent": "torso",
+      "start": [330, 250],
+      "end": [470, 820],
+      "depth": 0,
+      "claim": {
+        "hue": [-15, 12],
+        "box": [
+          320,
+          380,
+          530,
+          880
+        ]
+      }
+    }
+  ],
+  "attachments": [
+    {
+      "name": "sword",
+      "image": "sword.png",
+      "grip": [127, 140],
+      "tip": [127, 950],
+      "bone": "hand_r",
+      "length": 22.0,
+      "angle": 0,
+      "depth": 1.6,
+      "variants": [
+        {
+          "image": "sword_45.png",
+          "grip": [318, 85],
+          "tip": [20, 635],
+          "length": 16.2,
+          "from": 30
+        },
+        {
+          "image": "sword_tip.png",
+          "grip": [172, 125],
+          "tip": [172, 295],
+          "length": 3.2,
+          "from": 62
+        }
+      ]
+    }
+  ]
+}

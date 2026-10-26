@@ -6,6 +6,11 @@
     그 포트를 다른 프로그램이 쓰고 있으면 다음 포트(8766, 8767, …)를 쓴다.
 
 편집기(editor/editor.js)는 animate.py 와 똑같은 규칙(뼈 행렬, 열쇠 곡선, view_swap)으로 자세를 계산해 그린다.
+
+켜 둔 채로 갱신: 화면이 2초마다 /api/info 를 물어본다.
+- 그림·rig·조각·설정이 바뀌면 그 장면을 다시 읽는다 (서버는 바뀐 걸 알면 모델을 새로 만든다).
+- 지금 연 동작 파일이 밖에서 바뀌면 다시 불러온다 (저장 안 한 변경이 있으면 알리기만 한다).
+- Python 코드(animate.py 등)가 바뀌면 다시 켜 달라고 알린다. 실행 중인 프로그램의 코드는 바꿔 끼우지 않는다.
 그림 조각은 parts.PartModel 이 쓰는 것과 같은 텍스처·자리 행렬을 넘겨주므로, 편집기에서 본 자세와 픽셀 결과가 어긋나지 않는다.
 """
 import argparse
@@ -14,6 +19,8 @@ import json
 import os
 import subprocess
 import sys
+import threading
+import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -29,6 +36,18 @@ import parts  # noqa: E402
 
 STATIC = HERE / "editor"
 ANIMS = HERE / "anims"
+CODE_FILES = [HERE / n for n in ("editor.py", "animate.py", "parts.py", "common_anim.py", "pixelize.py")]
+STARTED = time.time()
+
+
+def code_changed():
+    """켜진 뒤에 바뀐 Python 파일 이름 (다시 켜야 반영된다)."""
+    return [p.name for p in CODE_FILES if p.exists() and p.stat().st_mtime > STARTED]
+
+
+def anim_mtimes():
+    """동작 파일마다 마지막 수정 시각 (화면이 밖에서 바뀐 걸 알아채는 데 쓴다). JS 숫자 정밀도 때문에 문자열로."""
+    return {f"{p.parent.name}/{p.stem}": str(p.stat().st_mtime_ns) for p in ANIMS.glob("*/*.json")}
 
 
 def straight_png(tex):
@@ -47,11 +66,28 @@ class Scenes:
     def __init__(self, char_dir, cfg_path):
         self.char_dir, self.cfg_path = char_dir, cfg_path
         self.models, self.textures = {}, {}
+        self.lock = threading.Lock()
+        self.version = None
 
     def reload(self):
         self.models, self.textures = {}, {}
 
+    def data_version(self):
+        """캐릭터 폴더의 그림·rig·조각과 설정 파일 상태 (파일 수 + 가장 늦은 수정 시각). 바뀌면 모델을 새로 만든다."""
+        files = [*self.char_dir.glob("*.json"), *self.char_dir.glob("*.png"),
+                 *(self.char_dir / "parts").glob("*/*"), self.cfg_path]
+        stats = [p.stat().st_mtime_ns for p in files if p.is_file()]
+        return f"{len(stats)}-{max(stats, default=0)}"
+
     def model(self, view):
+        with self.lock:
+            version = self.data_version()
+            if version != self.version:
+                self.models, self.textures = {}, {}
+                self.version = version
+            return self._model(view)
+
+    def _model(self, view):
         if view not in self.models:
             rig_path = self.char_dir / f"rig_{view}.json"
             if not (self.char_dir / "parts" / view / "parts.json").exists():
@@ -73,7 +109,7 @@ class Scenes:
             self.textures[(view, i)] = p["tex"]
             pieces.append({"bone": p["bone"], "depth": p["depth"], "layer": p["layer"],
                            "rest": np.asarray(p["rest"]).tolist(), "tex": f"/api/tex?view={view}&i={i}",
-                           "w": int(p["tex"].shape[1]), "h": int(p["tex"].shape[0])})
+                           "w": int(p["tex"].shape[1]), "h": int(p["tex"].shape[0]), "show": p.get("show")})
         return {
             "view": view, "size": m.size, "k": m.k, "unit": m.unit,
             "canvas": cfg["canvas"], "foot_line": m.size - cfg["foot_margin"] * m.k,
@@ -126,7 +162,8 @@ def make_handler(scenes):
                     return self.send(f.read_bytes(), ctype)
                 if url.path == "/api/info":
                     return self.send({"character": scenes.char_dir.name, "views": scenes.views(),
-                                      "anims": list_anims()})
+                                      "anims": list_anims(), "anim_mtimes": anim_mtimes(),
+                                      "data_version": scenes.data_version(), "code_changed": code_changed()})
                 if url.path == "/api/scene":
                     return self.send(scenes.scene(q["view"]))
                 if url.path == "/api/tex":
@@ -136,7 +173,7 @@ def make_handler(scenes):
                     raw = json.loads(path.read_text(encoding="utf-8"))
                     # 공통 동작은 방향마다 편집기가 바꿔 계산하므로 그대로 넘긴다
                     resolved = raw if q["key"].startswith("common/") else an.load_anim(path, ANIMS)
-                    return self.send({"raw": raw, "resolved": resolved})
+                    return self.send({"raw": raw, "resolved": resolved, "mtime": str(path.stat().st_mtime_ns)})
                 if url.path == "/api/output":
                     f = (HERE / q["path"]).resolve()
                     if (HERE / "output").resolve() not in f.parents or not f.exists():
@@ -168,8 +205,9 @@ def make_handler(scenes):
                         return self.fail("동작 이름은 영문·숫자·_ 만 됩니다")
                     data = json.loads(body.decode("utf-8"))
                     path = ANIMS / view / f"{name}.json"
+                    path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(format_anim(data), encoding="utf-8")
-                    return self.send({"saved": str(path.relative_to(HERE))})
+                    return self.send({"saved": str(path.relative_to(HERE)), "mtime": str(path.stat().st_mtime_ns)})
                 if url.path == "/api/render":
                     key = q["key"]
                     out = HERE / "output" / scenes.char_dir.name

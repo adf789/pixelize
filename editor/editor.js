@@ -81,6 +81,7 @@ function boneMatrices(sc, pose) {
     chain[name] = mat.mul(head, mat.move(-s[0], -s[1]));
     mats[name] = [head, foreshort, mat.move(-s[0], -s[1])].reduce(mat.mul);
   }
+  mats._chain = chain;   // 붙인 물건의 각도별 그림은 모양 줄임이 빠진 이 행렬로 그린다
   return mats;
 }
 
@@ -171,6 +172,11 @@ const VIEW_AXES = {
   front: [[1, 0, 0], [0, 1, 0], [0, 0, 1]], back: [[-1, 0, 0], [0, 1, 0], [0, 0, -1]],
   left: [[0, 0, -1], [0, 1, 0], [1, 0, 0]], right: [[0, 0, 1], [0, 1, 0], [-1, 0, 0]],
 };
+const HALF = Math.SQRT1_2;   // 대각선(45도) = 이웃한 두 방향의 가운데
+Object.assign(VIEW_AXES, {
+  front_left: [[HALF, 0, -HALF], [0, 1, 0], [HALF, 0, HALF]], back_left: [[-HALF, 0, -HALF], [0, 1, 0], [HALF, 0, -HALF]],
+  front_right: [[HALF, 0, HALF], [0, 1, 0], [-HALF, 0, HALF]], back_right: [[-HALF, 0, HALF], [0, 1, 0], [-HALF, 0, -HALF]],
+});
 const UP_KINDS = ["torso", "head"];
 const TWIST_AXIS = { torso: [0, -1, 0], head: [0, -1, 0], foot: [0, 0, 1] };
 const Z_SCALE = 8;
@@ -202,7 +208,9 @@ function localRotation(name, ch) {
 }
 
 function inPlane(view, spread, swing) {
-  return { front: spread, back: -spread, left: swing, right: -swing }[view];
+  return { front: spread, back: -spread, left: swing, right: -swing,
+    front_left: HALF * (spread + swing), back_left: HALF * (swing - spread),
+    front_right: HALF * (spread - swing), back_right: -HALF * (spread + swing) }[view];
 }
 
 function splitCard(n, near) {
@@ -355,8 +363,10 @@ function viewAnim(data, view) {           // common_anim.view_anim
   const extra = (data.views || {})[view] || {};
   const out = {};
   for (const [k, v] of Object.entries(data)) if (k !== "views" && k !== "keys") out[k] = v;
-  for (const [k, v] of Object.entries(extra)) if (k !== "keys") out[k] = v;
-  out.common = data.keys || {};
+  for (const [k, v] of Object.entries(extra)) if (k !== "keys" && k !== "common") out[k] = v;
+  out.common = {};
+  for (const [bone, chans] of Object.entries(data.keys || {})) out.common[bone] = { ...chans };
+  for (const [bone, chans] of Object.entries(extra.common || {})) out.common[bone] = { ...(out.common[bone] || {}), ...chans };
   out.keys = extra.keys || {};
   return out;
 }
@@ -403,11 +413,18 @@ function zOffsets(sc, pose) {             // animate.z_offsets
   return out;
 }
 
+function pickVariant(p, pose) {          // animate.pick_variant
+  if (!p.show) return true;
+  const q = pose[p.bone] || {};
+  const tilt = (q.z || 0) > 0 && (q.tilt || 0) <= 90 ? (q.tilt || 0) : 0;
+  return p.show[0] <= tilt && tilt < p.show[1];
+}
+
 function drawScene(ctx, sc, pose, scale, alpha = 1) {
   const mats = boneMatrices(sc, pose);
   const z = zOffsets(sc, pose);
   // 쌓는 순서 = depth + z (같으면 층 번호, 그다음 원래 순서) — parts.PartModel.render 와 같다
-  const order = sc.pieces.map((p, i) => i).sort((i, j) => {
+  const order = sc.pieces.map((p, i) => i).filter((i) => pickVariant(sc.pieces[i], pose)).sort((i, j) => {
     const a = sc.pieces[i], b = sc.pieces[j];
     return (a.depth + (z[a.bone] || 0)) - (b.depth + (z[b.bone] || 0)) || a.layer - b.layer || i - j;
   });
@@ -416,7 +433,8 @@ function drawScene(ctx, sc, pose, scale, alpha = 1) {
   for (const p of order.map((i) => sc.pieces[i])) {
     if (!sc.defaultLayers.has(p.layer) || !p.img.complete) continue;
     // OpenCV(warpAffine)는 화소 가운데를, 캔버스는 화소 모서리를 기준으로 그린다. 반 화소 옮겨 맞춘다.
-    const m = [mat.move(0.5, 0.5), mats[p.bone], p.rest, mat.move(-0.5, -0.5)].reduce(mat.mul);
+    const boneM = p.show && p.show[0] >= 0 ? mats._chain[p.bone] : mats[p.bone];   // 바꿔 끼운 그림은 모양 줄임 없이
+    const m = [mat.move(0.5, 0.5), boneM, p.rest, mat.move(-0.5, -0.5)].reduce(mat.mul);
     ctx.setTransform(scale * m[0][0], scale * m[1][0], scale * m[0][1], scale * m[1][1], scale * m[0][2], scale * m[1][2]);
     ctx.drawImage(p.img, 0, 0);
   }
@@ -481,6 +499,7 @@ function renderViews4() {    // 공통 동작: 지금 프레임을 네 방향으
   if (box.dataset.views !== st.info.views.join()) {
     box.dataset.views = st.info.views.join();
     box.innerHTML = st.info.views.map((v) => `<div class="v4" data-view="${v}"><canvas id="v4_${v}" width="120" height="120"></canvas><span>${v}</span></div>`).join("");
+    box.classList.toggle("many", st.info.views.length > 4);   // 8방향이면 두 줄로
     for (const el of box.querySelectorAll(".v4")) el.onclick = () => selectView(el.dataset.view);
   }
   const t = t_now();
@@ -519,7 +538,15 @@ function renderPixel(f) {
 
 // ---------------------------------------------------------------- 열쇠 편집
 
+function viewOverride(bone, ch) {     // 공통 동작에서 지금 방향만 따로 쓰는 채널 (views.<방향>.common)
+  if (!st.common) return null;
+  const o = (((st.raw.views || {})[st.view] || {}).common || {})[bone];
+  return o && o[ch] ? o[ch] : null;
+}
+
 function keysOf(bone, ch, create) {
+  const own = viewOverride(bone, ch);
+  if (own) return own;
   const K = st.raw.keys || (st.raw.keys = {});
   if (!K[bone]) { if (!create) return null; K[bone] = {}; }
   if (!K[bone][ch]) { if (!create) return null; K[bone][ch] = []; }
@@ -703,8 +730,11 @@ function renderPanel() {
   const f = st.cur;
   $("chanHelp").style.display = st.common ? "none" : "";
   $("commonHelp").style.display = st.common ? "" : "none";
-  $("swapInfo").textContent = f && f.swap ? `이 프레임은 ${f.swap.view} 그림으로 그립니다 (view_swap${f.swap.mirror ? ", 좌우 뒤집은 값" : ""}).` +
-    (sign < 0 ? " 끌기 방향은 자동으로 뒤집어 저장합니다." : "") : "";
+  const own = st.common ? Object.entries((((st.raw.views || {})[st.view] || {}).common) || {})
+    .flatMap(([b, chans]) => Object.keys(chans).map((c) => `${b}.${c}`)) : [];
+  $("swapInfo").textContent = (f && f.swap ? `이 프레임은 ${f.swap.view} 그림으로 그립니다 (view_swap${f.swap.mirror ? ", 좌우 뒤집은 값" : ""}).` +
+    (sign < 0 ? " 끌기 방향은 자동으로 뒤집어 저장합니다." : "") : "") +
+    (own.length ? ` 이 방향(${st.view})에서만 따로 쓰는 값: ${own.join(", ")} — 고치면 이 방향에만 들어갑니다.` : "");
 }
 
 function t_now() { return frameTimes(st.anim)[st.frame]; }
@@ -808,7 +838,8 @@ function mousePos(e) {
 // 공통 동작에서 끌기 → 채널과 부호. 화면 안에서 돌리기는 앞·뒤 그림이면 spread, 옆 그림이면 swing.
 // 앞뒤로 기울이기(Alt)는 그 반대 채널이고, 위로 끌면 보는 사람 쪽으로 온다.
 function commonDragChannel(view, bone, depth) {
-  const side = view === "left" || view === "right", flip = view === "back" || view === "right" ? -1 : 1;
+  // 대각선은 가까운 앞·뒤 그림처럼 다룬다 (화면 안 돌리기 = spread)
+  const side = view === "left" || view === "right", flip = ["back", "right", "back_left", "back_right"].includes(view) ? -1 : 1;
   if (bone === "root") return depth ? [side ? "spread" : "swing", flip] : [side ? "swing" : "spread", side ? -flip : flip];
   const m = bone.endsWith("_l") ? -1 : 1, up = UP_KINDS.includes(kindOf(bone)) ? -1 : 1;
   if (depth) return side ? ["spread", -up * m * flip] : ["swing", flip];
@@ -825,7 +856,7 @@ stage.addEventListener("mousedown", (e) => {
     // 공통 동작: 앞·뒤 그림의 옆 이동은 x, 옆 그림은 fwd (앞 = 얼굴 쪽)
     const v = st.cur.sc.view, side = v === "left" || v === "right";
     const xch = st.common && side ? "fwd" : "x";
-    const xsign = st.common ? ({ front: 1, back: -1, left: -1, right: 1 })[v] : sign;
+    const xsign = st.common ? ({ front: 1, back: -1, left: -1, right: 1, front_left: 1, front_right: 1, back_left: -1, back_right: -1 })[v] : sign;
     st.drag = { kind: "root", px, py, xch, x0: valueAt("root", xch, t), y0: valueAt("root", "y", t), sign: xsign };
     return;
   }
@@ -919,7 +950,7 @@ async function loadAnim(key) {
     $("animSel").value = st.key; return;
   }
   const j = await api(`/api/anim?key=${key}`);
-  st.key = key; st.raw = j.raw; st.resolved = j.resolved;
+  st.key = key; st.raw = j.raw; st.resolved = j.resolved; st.animMtime = j.mtime;
   st.common = key.startsWith("common/");
   st.undo = []; st.redo = []; st.committed = snap(); st.inGesture = false;
   st.readOnly = !st.common && "mirror_of" in j.raw;
@@ -948,7 +979,8 @@ async function save() {
   if (st.readOnly) return;
   const out = JSON.parse(JSON.stringify(st.raw));
   if (out.frame_ms && out.frame_ms.length !== out.frames) out.frame_ms = frameDurations({ ...st.anim, frame_ms: out.frame_ms }).slice(0, out.frames);
-  await api(`/api/anim?key=${st.key}`, { method: "POST", body: JSON.stringify(out) });
+  const r = await api(`/api/anim?key=${st.key}`, { method: "POST", body: JSON.stringify(out) });
+  st.animMtime = r.mtime;   // 내가 저장한 것은 "밖에서 바뀜"으로 보지 않는다
   st.dirty = false; setStatus("저장됨");
 }
 
@@ -980,7 +1012,7 @@ function fillAnimSel() {
   const common = st.info.anims.common || [], own = st.info.anims[st.view] || [];
   $("animSel").innerHTML =
     (common.length ? `<optgroup label="네 방향 공통">${common.map((n) => `<option value="common/${n}">${n}</option>`).join("")}</optgroup>` : "") +
-    `<optgroup label="${st.view} 전용">${own.map((n) => `<option value="${st.view}/${n}">${n}</option>`).join("")}</optgroup>`;
+    (own.length ? `<optgroup label="${st.view} 전용">${own.map((n) => `<option value="${st.view}/${n}">${n}</option>`).join("")}</optgroup>` : "");
   if (st.key) $("animSel").value = st.key;
 }
 
@@ -1080,4 +1112,58 @@ window.addEventListener("keydown", (e) => {
 });
 window.addEventListener("beforeunload", (e) => { if (st.dirty) { e.preventDefault(); e.returnValue = ""; } });
 
-init().catch((e) => setStatus("오류: " + e.message));
+// ---------------------------------------------------------------- 켜 둔 채로 갱신
+// 2초마다 서버에 물어본다: 그림·rig·조각이 바뀌면 장면을, 동작 파일이 밖에서 바뀌면 동작을 다시 읽는다.
+// Python 코드가 바뀌면 (서버를 다시 켜야 하므로) 위에 알린다.
+
+async function reloadScenes(info) {
+  setStatus("그림이 바뀌어 다시 읽는 중…");
+  const fresh = {};
+  const keep = st.scenes;
+  st.scenes = fresh;
+  try {
+    for (const v of info.views) await loadScene(v);
+  } catch (e) {
+    st.scenes = keep;
+    throw e;
+  }
+  st.info.views = info.views;
+  st.info.data_version = info.data_version;
+  if (!info.views.includes(st.view)) st.view = info.views[0];
+  $("viewSel").innerHTML = info.views.map((v) => `<option>${v}</option>`).join("");
+  $("viewSel").value = st.view;
+  $("boneSel").innerHTML = ["root", ...st.scenes[st.view].bones.map((b) => b[0])].map((b) => `<option>${b}</option>`).join("");
+  if (st.bone !== "root" && !st.scenes[st.view].bones.some((b) => b[0] === st.bone)) st.bone = "torso";
+  $("views4").dataset.views = "";   // 미리 보기 칸을 새로 만든다
+  resolveAnim(); render(); renderTimeline();
+  setStatus("그림이 바뀌어 다시 읽었습니다");
+}
+
+async function poll() {
+  try {
+    const info = await api("/api/info");
+    const code = info.code_changed || [];
+    $("codeNotice").style.display = code.length ? "" : "none";
+    $("codeNotice").textContent = code.length ? `도구 코드가 바뀌었습니다 (${code.join(", ")}) — 편집기를 다시 켜야 반영됩니다` : "";
+    if (info.data_version !== st.info.data_version || info.views.join() !== st.info.views.join()) await reloadScenes(info);
+    if (JSON.stringify(info.anims) !== JSON.stringify(st.info.anims)) { st.info.anims = info.anims; fillAnimSel(); }
+    const m = (info.anim_mtimes || {})[st.key];
+    if (st.key && m && st.animMtime && m !== st.animMtime && !st.playing && !st.drag) {
+      if (!st.dirty) {
+        const frame = st.frame, bone = st.bone;
+        await loadAnim(st.key);
+        st.frame = Math.min(frame, st.anim.frames - 1); st.bone = bone;
+        render(); renderTimeline();
+        setStatus("동작 파일이 바뀌어 다시 불러왔습니다");
+      } else if (st.warnedMtime !== m) {
+        st.warnedMtime = m;
+        setStatus("동작 파일이 밖에서 바뀌었습니다 (저장 안 한 변경이 있어 불러오지 않음)");
+      }
+    }
+  } catch (e) {
+    // 서버가 꺼졌거나 다시 켜지는 중이면 다음에 다시 물어본다
+  }
+  setTimeout(poll, 2000);
+}
+
+init().then(() => setTimeout(poll, 2000)).catch((e) => setStatus("오류: " + e.message));

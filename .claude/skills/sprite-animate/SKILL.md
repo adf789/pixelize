@@ -13,6 +13,9 @@ description: T자 캐릭터 일러스트(front/back/left.png)에 뼈대를 심�
 - 캐릭터 폴더: `characters/<이름>/front.png`, `back.png`, `left.png` (있는 것만 처리)
   - 앞·뒤는 팔을 벌린 T자 자세, 옆은 팔을 내려도 된다. 옆 그림은 왼쪽을 보게 하고 `left.png` 로 둔다.
   - 오른쪽 그림(`right.png`)은 왼쪽 rig·조각을 다 고친 뒤 `animate.bat mirror characters/<이름> left right` → `animate.bat parts characters/<이름> --views right` 로 만든다.
+  - 대각선(8방향): `front_left.png`, `back_left.png` 를 넣고 `rig --views front_left back_left` → 확인·추가 뼈 → `parts --views ...` → `mirror front_left front_right`, `mirror back_left back_right` → `parts --views front_right back_right`. 그림 규격은 `docs/extra_art_guide.md`.
+  - **새 방향을 더할 때 `rig` 는 꼭 `--views` 를 준다.** 안 주면 이미 고친 다른 방향 rig 를 덮어쓴다.
+  - 등을 덮은 망토처럼 거리로 가를 수 없는 부분은 추가 뼈에 `claim`(색상·상자)을 준다 (README "8방향").
   - 단색 배경. 아래 "Front" 같은 글자는 자동으로 지워진다.
 - 사용자가 다른 이름으로 그림을 줬으면 이 이름으로 **복사**한다 (원본은 건드리지 않는다).
 
@@ -51,6 +54,7 @@ animate.bat rig characters/<이름>
   - `length`: 손잡이→끝 길이를 최종 픽셀(64칸 기준)로. `depth`: 앞뒤 순서 (뒤 그림에서는 몸 뒤라 작게).
   - 붙인 물건은 `name` 으로 동작에서 뼈처럼 돌릴 수 있다 (손목 꺾기). 확인 그림에는 흰 네모로 보인다.
   - 모든 방향에서 같은 손(`hand_r`)에 붙인다. 왼쪽 그림에서는 뒤쪽 손이라 `depth` 를 몸 뒤(0.5)로 둔다 (`mirror` 가 오른쪽 그림에서는 몸 앞으로 바꿔 준다).
+  - 보는 사람 쪽으로 기운 모습의 그림(45도, 정면)이 있으면 `variants` 로 넣는다 (README "칼 각도별 그림").
 - 갑옷·투구·옷처럼 **몸에 딱 붙어 같이 휘는 장비**는 → `layers` 에 덮개 그림을 넣는다.
   ```json
   "layers": [
@@ -60,6 +64,7 @@ animate.bat rig characters/<이름>
   ```
   - 덮개 그림은 **그 방향 원본 그림과 같은 크기**의 투명 PNG 이고, 원본 위에 겹쳤을 때 딱 맞는 자리에 그려져 있어야 한다 (AI 인페인팅으로 원본의 그 부분만 다시 그린 뒤 그 부분만 남기면 된다).
   - 같은 `slot` 의 층은 서로 바꿔 끼우는 변형이다. 합친 시트에는 slot 마다 **첫 번째** 층만 들어간다.
+  - `"in_sheet": false` 를 주면 그 층은 합친 시트에서 빠지고 층 시트(`--layers`)에만 나온다. 모든 방향의 그림이 없는 장비에 쓴다.
   - 덮개는 몸과 같은 그물·무게로 휜다. 메시는 몸과 모든 덮개를 합친 모양에 씌운다.
   - 붙인 물건(`attachments`)도 `slot` 을 줄 수 있다. 같은 slot 의 물건들은 뼈 하나(이름 = slot)를 함께 쓴다.
 - 겹칠 때 앞뒤가 틀림 → `depth` (큰 수가 앞). 추가 뼈는 각자 `depth` 를 갖는다.
@@ -102,7 +107,8 @@ animate.bat parts characters/<이름>          # 이미 있으면 건너뜀. 다
 }
 ```
 - `swing` = 앞뒤로 휘두르기 (팔다리 끝이 앞으로 +, 몸통·머리·root 는 앞으로 숙이기 +), `spread` = 옆으로 벌리기 (팔다리 바깥쪽 +), `twist` = 제 축으로 비틀기, `len`. `root` 는 `x`(캐릭터 왼쪽)/`y`(아래)/`fwd`(앞) 이동도.
-- 방향마다 다른 값(궤적 프레임, `view_swap`, 그 방향만 더할 2D `keys`)은 `views.<방향>` 에 넣는다.
+- 방향마다 다른 값(궤적 프레임, `view_swap`, 그 방향만 더할 2D `keys`, 그 방향에서만 바꿔 쓸 공통 채널 `common`)은 `views.<방향>` 에 넣는다.
+- 칼을 뻗는 자세는 앞 그림과 옆 그림에서 모두 보이게 "앞·옆·아래 사이 대각선"으로 둔다 (예: 오른팔 swing 64, spread -37). 한쪽으로만 뻗으면 다른 그림에서는 보는 사람 쪽을 향해 짧아져 사라진다.
 - 땅에 서 있는 동작은 `"root": {"ground": [[0, 1]]}` 로 바닥 붙이기를 켠다. 무릎을 굽히면 몸이 저절로 내려앉으니 `y` 로 맞추지 않는다. 공중 구간만 0 (열쇠에 `"ease"` 를 붙여 넘치지 않게).
 - 망토는 `"follow": {"cape": {"of": "torso", "lag": 2}, "cape_l": ..., "cape_r": ...}` 로 늦게 따라오게 한다 (방향마다 망토 뼈 이름이 다르다).
 - 돌리는 순서는 twist → spread → swing: 팔을 앞으로 든 채(swing 90) spread 를 바꾸면 가로 베기. 머리 위 내려베기는 swing 을 160 → 50 으로, 몸 앞을 가로지르면 spread 를 음수로.

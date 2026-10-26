@@ -1,0 +1,134 @@
+{
+  "view": "back_right",
+  "image": "back_right.png",
+  "parts": [
+    {
+      "name": "thigh_l",
+      "file": "thigh_l.png",
+      "depth": 0.8,
+      "pixels": 486,
+      "filled": 58,
+      "cap": 4725
+    },
+    {
+      "name": "shin_l",
+      "file": "shin_l.png",
+      "depth": 0.8,
+      "pixels": 10484,
+      "filled": 2441,
+      "cap": 3256
+    },
+    {
+      "name": "foot_l",
+      "file": "foot_l.png",
+      "depth": 0.8,
+      "pixels": 4467,
+      "filled": 0,
+      "cap": 737
+    },
+    {
+      "name": "thigh_r",
+      "file": "thigh_r.png",
+      "depth": 1,
+      "pixels": 13793,
+      "filled": 1074,
+      "cap": 3626
+    },
+    {
+      "name": "shin_r",
+      "file": "shin_r.png",
+      "depth": 1,
+      "pixels": 17529,
+      "filled": 60,
+      "cap": 2062
+    },
+    {
+      "name": "foot_r",
+      "file": "foot_r.png",
+      "depth": 1,
+      "pixels": 5778,
+      "filled": 0,
+      "cap": 929
+    },
+    {
+      "name": "upper_arm_l",
+      "file": "upper_arm_l.png",
+      "depth": 1.5,
+      "pixels": 5850,
+      "filled": 352,
+      "cap": 1243
+    },
+    {
+      "name": "forearm_l",
+      "file": "forearm_l.png",
+      "depth": 1.5,
+      "pixels": 3716,
+      "filled": 108,
+      "cap": 1019
+    },
+    {
+      "name": "hand_l",
+      "file": "hand_l.png",
+      "depth": 1.5,
+      "pixels": 1352,
+      "filled": 67,
+      "cap": 759
+    },
+    {
+      "name": "torso",
+      "file": "torso.png",
+      "depth": 2,
+      "pixels": 1400,
+      "filled": 2264,
+      "cap": 29
+    },
+    {
+      "name": "cape_r",
+      "file": "cape_r.png",
+      "depth": 2.2,
+      "pixels": 55015,
+      "filled": 2637,
+      "cap": 1124
+    },
+    {
+      "name": "cape_l",
+      "file": "cape_l.png",
+      "depth": 2.2,
+      "pixels": 53061,
+      "filled": 38,
+      "cap": 269
+    },
+    {
+      "name": "head",
+      "file": "head.png",
+      "depth": 3,
+      "pixels": 24022,
+      "filled": 59,
+      "cap": 2666
+    },
+    {
+      "name": "upper_arm_r",
+      "file": "upper_arm_r.png",
+      "depth": 4,
+      "pixels": 11770,
+      "filled": 0,
+      "cap": 1011
+    },
+    {
+      "name": "forearm_r",
+      "file": "forearm_r.png",
+      "depth": 4,
+      "pixels": 5874,
+      "filled": 0,
+      "cap": 1103
+    },
+    {
+      "name": "hand_r",
+      "file": "hand_r.png",
+      "depth": 4,
+      "pixels": 3096,
+      "filled": 0,
+      "cap": 707
+    }
+  ]
+}

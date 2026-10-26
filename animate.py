@@ -31,9 +31,11 @@ from PIL import Image, ImageDraw, ImageFont
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # 내장 Python은 스크립트 폴더를 자동으로 찾지 않는다
 import pixelize as px  # noqa: E402
-VIEWS = ("front", "back", "left", "right")
+VIEWS = ("front", "back", "left", "right", "front_left", "back_left", "front_right", "back_right")
 # 옆 그림: 왼쪽을 보면 캐릭터의 왼쪽(_l)이, 오른쪽을 보면 오른쪽(_r)이 보는 사람 쪽(가까운 쪽)이다.
 SIDE_VIEWS = {"left": "l", "right": "r"}
+# 대각선 그림(45도): 두 팔다리가 다 보이지만 한쪽이 보는 사람 쪽이다. 왼쪽 대각선은 캐릭터의 왼쪽이 가깝다.
+DIAG_VIEWS = {"front_left": "l", "back_left": "l", "front_right": "r", "back_right": "r"}
 ANIM_DEFAULTS = {"render_scale": 8, "mesh_step": 4}
 MODEL_URL = ("https://download.openmmlab.com/mmpose/v1/projects/rtmw/onnx_sdk/"
              "rtmw-dw-x-l_simcc-cocktail14_270e-384x288_20231122.zip")
@@ -75,7 +77,10 @@ DEFAULT_DEPTH = {
     "back": {"thigh": 1, "shin": 1, "foot": 1, "torso": 2, "head": 3, "upper_arm": 4, "forearm": 4, "hand": 4},
     "left": {"torso": 3, "head": 4},
     "right": {"torso": 3, "head": 4},
+    **{v: {"thigh": 1, "shin": 1, "foot": 1, "torso": 2, "head": 3, "upper_arm": 4, "forearm": 4, "hand": 4}
+       for v in ("front_left", "back_left", "front_right", "back_right")},
 }
+DIAG_FAR_DEPTH = {"upper_arm": 1.5, "forearm": 1.5, "hand": 1.5, "thigh": 0.8, "shin": 0.8, "foot": 0.8}  # 대각선의 먼 쪽 팔다리
 SIDE_LIMB_DEPTH = {"upper_arm": (0, 5), "forearm": (0, 5), "hand": (0, 5),
                    "thigh": (1, 2), "shin": (1, 2), "foot": (1, 2)}  # (뒤쪽, 앞쪽)
 
@@ -205,6 +210,8 @@ def default_depth(view):
         kind = name.rsplit("_", 1)[0] if name.endswith(("_l", "_r")) else name
         if view in SIDE_VIEWS and kind in SIDE_LIMB_DEPTH:
             depth[name] = SIDE_LIMB_DEPTH[kind][1 if name.endswith("_" + SIDE_VIEWS[view]) else 0]
+        elif view in DIAG_VIEWS and kind in DIAG_FAR_DEPTH and not name.endswith("_" + DIAG_VIEWS[view]):
+            depth[name] = DIAG_FAR_DEPTH[kind]
         else:
             depth[name] = DEFAULT_DEPTH[view][kind]
     return depth
@@ -224,6 +231,8 @@ def rig_bones(rig):
 def cmd_rig(args):
     cfg = load_config(args.config)
     for view, path in view_images(args.character).items():
+        if args.views and view not in args.views:
+            continue
         img = load_clean(path, cfg)
         joints = detect_joints(img, view, cfg["alpha_threshold"])
         rig = {"image": path.name, "view": view, "joints": joints,
@@ -243,18 +252,27 @@ def cmd_mirror(args):
     """한 방향 그림을 좌우로 뒤집어 다른 방향을 만든다 (예: 왼쪽을 보는 옆 그림 → 오른쪽을 보는 옆 그림).
     그림·덮개 그림을 뒤집고, rig 의 관절·추가 뼈 좌표를 뒤집는다. 앞뒤 순서는 새 방향의 보이는 쪽에 맞춰 다시 정한다.
     붙인 물건(칼)은 같은 손에 그대로 두고, 그 손 바로 앞(+0.5)에 그린다 — 오른손잡이는 어느 방향에서도 오른손잡이다.
-    나중에 그 방향 그림을 따로 그려 넣으면 그 그림으로 rig 부터 다시 만들면 된다."""
+    나중에 그 방향 그림을 따로 그려 넣으면 그 그림으로 rig 부터 다시 만들면 된다.
+    옆 그림이 아니면(대각선 등) 뒤집은 그림에서는 왼쪽·오른쪽 팔다리가 바뀌므로 관절 이름의 _l/_r 도 바꾼다."""
     char, src, dst = args.character, args.source, args.target
     rig = json.loads((char / f"rig_{src}.json").read_text(encoding="utf-8"))
     img = Image.open(char / rig["image"])
     w = img.width
     img.transpose(Image.FLIP_LEFT_RIGHT).save(char / f"{dst}.png")
     flip = lambda p: [round(w - 1 - p[0], 1), p[1]]
+    swap = (lambda n: n) if src in SIDE_VIEWS else (
+        lambda n: n[:-2] + {"_l": "_r", "_r": "_l"}[n[-2:]] if n.endswith(("_l", "_r")) else n)
 
-    out = {k: v for k, v in rig.items() if k not in ("joints", "extra_bones", "layers", "attachments", "depth")}
-    out.update(image=f"{dst}.png", view=dst, joints={n: flip(p) for n, p in rig["joints"].items()})
+    out = {k: v for k, v in rig.items() if k not in ("joints", "extra_bones", "layers", "attachments", "depth", "base_pose")}
+    out.update(image=f"{dst}.png", view=dst, joints={swap(n): flip(p) for n, p in rig["joints"].items()})
+    out["base_pose"] = {swap(b): ({**ch, "rot": -ch["rot"]} if "rot" in ch else ch) for b, ch in rig.get("base_pose", {}).items()}
     depth = default_depth(dst)
-    out["extra_bones"] = [{**e, "start": flip(e["start"]), "end": flip(e["end"])} for e in rig.get("extra_bones", [])]
+    out["extra_bones"] = [{**e, "name": swap(e["name"]), "start": flip(e["start"]), "end": flip(e["end"])}
+                          for e in rig.get("extra_bones", [])]
+    for e in out["extra_bones"]:
+        if "claim" in e:  # 색으로 가져오는 상자도 좌우로 뒤집는다
+            x0, y0, x1, y1 = e["claim"]["box"]
+            e["claim"] = {**e["claim"], "box": [w - x1, y0, w - x0, y1]}
     out["depth"] = depth
     layers = []
     for layer in rig.get("layers", []):
@@ -352,7 +370,8 @@ class Model:
             if limg.size != img.size:
                 sys.exit(f"{layer['image']}: 크기가 {rig['image']} 와 같아야 합니다 ({limg.size} != {img.size})")
             rests.append(place(limg))
-            self.layers.append({"name": layer["name"], "slot": layer.get("slot", layer["name"])})
+            self.layers.append({"name": layer["name"], "slot": layer.get("slot", layer["name"]),
+                                "in_sheet": layer.get("in_sheet", True)})
         self.layer_images = rests[1:]
         self.texture = np.concatenate([np.asarray(r) for r in rests], axis=1)  # 층 그림을 가로로 이어 붙인다
         self.to_canvas = lambda p: (np.asarray(p, float) - [x0, y0]) * f + [ox, oy]
@@ -431,7 +450,8 @@ class Model:
         first = {}
         for i, layer in enumerate(self.layers):
             first.setdefault(layer["slot"], i)
-        self.default_layers = sorted(first.values())
+        # 합친 시트: slot 마다 첫 번째 층. 단 "in_sheet": false 인 층(예: 일부 방향에만 그림이 있는 투구)은 뺀다
+        self.default_layers = sorted(i for i in first.values() if self.layers[i].get("in_sheet", True))
 
     def _attach(self, path, a, start, end, bone_i, depth, layer_i):
         """무기처럼 휘지 않는 그림 한 장을 뼈에 붙인다. 네모 하나(삼각형 두 개)로 그린다.
@@ -588,7 +608,7 @@ def _move(x, y):
     return np.array([[1, 0, x], [0, 1, y], [0, 0, 1]], float)
 
 
-def bone_matrices(bones, joints, pose, unit):
+def bone_matrices(bones, joints, pose, unit, with_chain=False):
     """뼈마다 '쉼 자세 좌표 → 움직인 좌표' 행렬. 회전은 화면에서 시계 방향이 양수(도).
     len 은 뼈 방향으로 늘이고 줄이는 비율, x/y 는 캐릭터 키 48 기준 칸 단위 이동 (unit = 그리기 픽셀 / 그 1칸).
     tilt 는 보는 사람 쪽(+)/반대쪽(-)으로 기울인 각도(도) — 뼈 방향으로 cos(tilt) 만큼 짧아져 보인다.
@@ -617,7 +637,18 @@ def bone_matrices(bones, joints, pose, unit):
         head = _move(p.get("x", 0) * unit, p.get("y", 0) * unit) @ _move(*s) @ _rot(p.get("rot", 0)) @ stretch
         chain[name] = base @ head @ _move(-s[0], -s[1])
         mats[name] = base @ head @ foreshort @ _move(-s[0], -s[1])
-    return mats
+    return (mats, chain) if with_chain else mats
+
+
+def pick_variant(piece, pose):
+    """붙인 물건의 각도별 그림 중 지금 그릴 것인가. 물건이 보는 사람 쪽(z > 0)으로 tilt 만큼 기울었으면
+    그 기울기 구간(show_from ≤ tilt < show_to)의 그림을, 아니면 기본 그림(show_from < 0)을 그린다."""
+    show = piece.get("show")
+    if show is None:
+        return True
+    p = pose.get(piece["bone"], {})
+    tilt = p.get("tilt", 0) if p.get("z", 0) > 0 and p.get("tilt", 0) <= 90 else 0
+    return show[0] <= tilt < show[1]
 
 
 def z_offsets(bones, pose):
@@ -1308,6 +1339,7 @@ def main():
     p_parts.add_argument("-c", "--config", type=Path, default=HERE / "config.json")
     p_parts.add_argument("--force", action="store_true", help="이미 있는 조각을 덮어쓴다")
     p_parts.add_argument("--views", nargs="*", help="이 방향만 (예: right)")
+    p_rig.add_argument("--views", nargs="*", help="이 방향만 (예: front_left). 이미 고친 다른 방향 rig 를 덮어쓰지 않으려면 꼭 준다")
 
     p_mirror = sub.add_parser("mirror", help="한 방향 그림을 좌우로 뒤집어 다른 방향을 만든다 (예: left right)")
     p_mirror.add_argument("character", type=Path)

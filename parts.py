@@ -22,7 +22,8 @@ import animate as an
 import pixelize as px
 
 # 골반 조각: 몸통을 숙여도 허리띠·앞치마가 끌려가지 않도록 몸통에서 떼어 낸다.
-HIPS_DEPTH = {"front": 1.5, "back": 1.5, "left": 2.5, "right": 2.5}
+HIPS_DEPTH = {"front": 1.5, "back": 1.5, "left": 2.5, "right": 2.5,
+              "front_left": 1.5, "back_left": 1.5, "front_right": 1.5, "back_right": 1.5}
 FILL_COLOR = (255, 60, 200)
 CAP_COLOR = (60, 200, 255)
 LIMBS = [f"{p}_{s}" for s in ("l", "r") for p in ("upper_arm", "forearm", "hand", "thigh", "shin", "foot")]
@@ -149,6 +150,37 @@ def enclosed_holes(mask):
     return (flood[1:-1, 1:-1] == 1)
 
 
+def apply_claims(labels, src, silhouette, rig, names, joints):
+    """추가 뼈의 claim: 상자 안에서 색(색상 각도)이 맞는 픽셀은 그 뼈 조각으로 가져온다.
+    등을 덮은 망토처럼 몸통·다리와 겹쳐 그려져 거리로는 가를 수 없는 부분에 쓴다.
+    "claim": {"hue": [-12, 12], "box": [x0, y0, x1, y1]} — 색상 각도(빨강 0도 기준, 도), 원본 픽셀 상자.
+    여러 뼈가 같은 픽셀을 원하면 그 뼈 선분에 가장 가까운 쪽이 갖는다."""
+    claims = [e for e in rig.get("extra_bones", []) if e.get("claim")]
+    if not claims:
+        return labels
+    hsv = cv2.cvtColor(np.ascontiguousarray(src[..., :3]), cv2.COLOR_RGB2HSV_FULL).astype(float)
+    hue = hsv[..., 0] * 360 / 256
+    hue = (hue + 180) % 360 - 180
+    sat, val = hsv[..., 1] / 255, hsv[..., 2] / 255
+    yy, xx = np.mgrid[:src.shape[0], :src.shape[1]]
+    best = np.full(labels.shape, np.inf)
+    out = labels.copy()
+    for e in claims:
+        c = e["claim"]
+        x0, y0, x1, y1 = c["box"]
+        lo, hi = c["hue"]
+        want = (silhouette & (xx >= x0) & (xx < x1) & (yy >= y0) & (yy < y1)
+                & (hue >= lo) & (hue <= hi) & (sat > 0.35) & (val > 0.15))
+        a, b = np.array(joints[e["name"] + "_start"], float), np.array(joints[e["name"] + "_end"], float)
+        d = b - a
+        t = np.clip(((xx - a[0]) * d[0] + (yy - a[1]) * d[1]) / max(d @ d, 1e-9), 0, 1)
+        dist = np.hypot(xx - (a[0] + t * d[0]), yy - (a[1] + t * d[1]))
+        take = want & (dist < best)
+        out[take] = names.index(e["name"])
+        best[take] = dist[take]
+    return out
+
+
 def make_parts(char_dir, rig, cfg):
     thr = cfg["alpha_threshold"]
     body = body_rig(rig)
@@ -168,6 +200,7 @@ def make_parts(char_dir, rig, cfg):
     override = {names.index(f"{p}_{near}"): hw[f"{p}_{near}"] * f for p in ("upper_arm", "forearm", "hand")} if near else {}
     dense = canvas_labels(model, cfg["mesh_step"], thr, depth, reach, override)
     labels = merge_crumbs(source_labels(model, dense, img, thr))
+    labels = apply_claims(labels, src, silhouette, rig, names, joints)
     present = [i for i in range(len(names)) if (labels == i).any()]
 
     x0, y0, x1, y1 = an.content_box(img, thr)
@@ -318,7 +351,8 @@ class PartModel:
             if limg.size != img.size:
                 sys.exit(f"{layer['image']}: 크기가 {rig['image']} 와 같아야 합니다 ({limg.size} != {img.size})")
             li = len(self.layers)
-            self.layers.append({"name": layer["name"], "slot": layer.get("slot", layer["name"])})
+            self.layers.append({"name": layer["name"], "slot": layer.get("slot", layer["name"]),
+                                "in_sheet": layer.get("in_sheet", True)})
             self.layer_images.append(place(limg))
             la = np.asarray(limg)
             for i, n in enumerate(names):
@@ -329,21 +363,32 @@ class PartModel:
                     add(Image.fromarray(piece), far_map[n], depth_of[far_map[n]], li, tint=True)
 
         # 붙인 물건: 그림 속 grip→tip 방향을 손잡이→끝 방향에 맞춘다.
+        # variants: 보는 사람 쪽으로 기울었을 때 바꿔 끼울 그림 (예: 45도로 기운 칼, 칼끝이 정면인 칼).
+        # 각 그림의 length 는 그 그림 속 손잡이→끝이 화면에 보이는 길이(키 48칸 기준). 바꿔 끼운 그림은 이미
+        # 짧아진 모습이라 tilt 로 더 줄이지 않는다 (render 에서 모양 줄임이 빠진 행렬로 그린다).
         self.attach_images = []
         for a, (grip, end) in zip(attachments, placed):
             li = len(self.layers)
             slot = a.get("slot", a["name"])
             self.layers.append({"name": a["name"], "slot": slot})
-            im = Image.open(char_dir / a["image"]).convert("RGBA")
-            g, t = np.array(a["grip"], float), np.array(a["tip"], float)
-            scale = np.linalg.norm(end - grip) / np.linalg.norm(t - g)
-            tw, th = max(1, round(im.width * scale)), max(1, round(im.height * scale))
-            tex = im.resize((tw, th), Image.LANCZOS)
-            ang = math.degrees(math.atan2(*(end - grip)[::-1]) - math.atan2(*(t - g)[::-1]))
-            rest = _move(*grip) @ an._rot(ang) @ _move(*(-g * scale))
-            self.pieces.append({"bone": slot, "depth": a.get("depth", 5), "layer": li, "rest": rest,
-                                "tex": _premultiplied(tex)})
-            self.attach_images.append(tex)
+            direction = (end - grip) / np.linalg.norm(end - grip)
+            variants = sorted(a.get("variants", []), key=lambda v: v["from"])
+            looks = [(a, -1)] + [(v, v["from"]) for v in variants]
+            for k, (look, start) in enumerate(looks):
+                im = Image.open(char_dir / look["image"]).convert("RGBA")
+                g, t = np.array(look["grip"], float), np.array(look["tip"], float)
+                tip_at = grip + direction * look["length"] * self.unit
+                scale = np.linalg.norm(tip_at - grip) / np.linalg.norm(t - g)
+                tw, th = max(1, round(im.width * scale)), max(1, round(im.height * scale))
+                tex = im.resize((tw, th), Image.LANCZOS)
+                ang = math.degrees(math.atan2(*(tip_at - grip)[::-1]) - math.atan2(*(t - g)[::-1]))
+                rest = _move(*grip) @ an._rot(ang) @ _move(*(-g * scale))
+                piece = {"bone": slot, "depth": a.get("depth", 5), "layer": li, "rest": rest, "tex": _premultiplied(tex)}
+                if variants:
+                    piece["show"] = [start, looks[k + 1][1] if k + 1 < len(looks) else 999]
+                self.pieces.append(piece)
+                if k == 0:
+                    self.attach_images.append(tex)
 
         # 같은 depth 안에서는 몸 → 덮개 → 물건, 그다음 넣은 순서대로 위에 쌓는다.
         self.pieces = [p for _, p in sorted(enumerate(self.pieces), key=lambda ip: (ip[1]["depth"], ip[1]["layer"], ip[0]))]
@@ -351,7 +396,8 @@ class PartModel:
         for i, layer in enumerate(self.layers):
             first.setdefault(layer["slot"], i)
         self.slots = list(first)
-        self.default_layers = sorted(first.values())
+        # 합친 시트: slot 마다 첫 번째 층. 단 "in_sheet": false 인 층(예: 일부 방향에만 그림이 있는 투구)은 뺀다
+        self.default_layers = sorted(i for i in first.values() if self.layers[i].get("in_sheet", True))
 
     def depth_levels(self):
         return sorted({p["depth"] for p in self.pieces})
@@ -359,16 +405,17 @@ class PartModel:
     def render(self, pose, parts=False):
         """slot 마다 첫 번째 층을 합친 그림. parts=True 면 (층 번호, depth) 마다 따로 그린 그림도 함께 돌려준다.
         쌓는 순서는 depth + z (동작의 z 값. 자식은 부모의 z 를 이어받는다)."""
-        mats = an.bone_matrices(self.bones, self.joints, pose, self.unit)
+        mats, chain = an.bone_matrices(self.bones, self.joints, pose, self.unit, with_chain=True)
         z = an.z_offsets(self.bones, pose)
-        order = sorted(range(len(self.pieces)), key=lambda i: (self.pieces[i]["depth"] + z.get(self.pieces[i]["bone"], 0),
-                                                              self.pieces[i]["layer"], i))
+        order = sorted((i for i in range(len(self.pieces)) if an.pick_variant(self.pieces[i], pose)),
+                       key=lambda i: (self.pieces[i]["depth"] + z.get(self.pieces[i]["bone"], 0), self.pieces[i]["layer"], i))
         size = self.size
         combined = np.zeros((size, size, 4), np.float32)
         groups = {}
         for i in order:
             p = self.pieces[i]
-            m = (mats[p["bone"]] @ p["rest"])[:2]
+            bone_m = chain[p["bone"]] if p.get("show", [-1])[0] >= 0 else mats[p["bone"]]  # 바꿔 끼운 그림은 모양 줄임 없이
+            m = (bone_m @ p["rest"])[:2]
             warped = cv2.warpAffine(p["tex"], m, (size, size), flags=cv2.INTER_LINEAR,
                                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
             if p["layer"] in self.default_layers:

@@ -36,7 +36,9 @@
   #views4 .v4.cur { border-color: var(--sel); }
   #views4 .v4 span { position: absolute; left: 4px; top: 8px; line-height: 1; color: var(--dim); font-size: 11px; }
   #views4 canvas { width: 96px; height: 96px; }
-  #stageWrap.with4 { padding-right: 112px; }
+  #views4.many { display: grid; grid-template-columns: repeat(2, 84px); }
+  #views4.many canvas { width: 84px; height: 84px; }
+  #stageWrap.with4 { padding-right: 190px; }
   @media (max-width: 900px) { #views4 { position: static; transform: none; flex-direction: row; justify-content: center; } #stageWrap { flex-direction: column; } #stageWrap.with4 { padding-right: 0; } }
   #banner { position: absolute; top: 8px; right: 8px; background: #4a3320; border: 1px solid var(--accent); padding: 6px 8px; border-radius: 4px; display: none; max-width: 340px; }
   aside { background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 10px; }
@@ -78,6 +80,7 @@
   <button id="redoBtn" title="다시 하기 (Ctrl+Y)" disabled>↷</button>
   <button id="saveBtn" title="저장 (Ctrl+S)">저장</button>
   <button id="renderBtn" class="primary">픽셀로 만들기</button>
+  <span id="codeNotice" style="display:none; color: var(--warn)"></span>
   <span id="status">불러오는 중…</span>
 </header>
 <main>

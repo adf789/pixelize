@@ -66,24 +66,42 @@
     {
       "name": "sword",
       "image": "sword.png",
-      "grip": [45, 430],
-      "tip": [45, 6],
-      "length": 22,
-      "angle": 0,
+      "grip": [127, 140],
+      "tip": [127, 950],
       "bone": "hand_r",
-      "depth": 0.5
+      "length": 22.0,
+      "angle": 0,
+      "depth": 0.5,
+      "variants": [
+        {
+          "image": "sword_45.png",
+          "grip": [318, 85],
+          "tip": [20, 635],
+          "length": 16.2,
+          "from": 30
+        },
+        {
+          "image": "sword_tip.png",
+          "grip": [172, 125],
+          "tip": [172, 295],
+          "length": 3.2,
+          "from": 62
+        }
+      ]
     }
   ],
   "layers": [
     {
       "name": "helmet_iron",
       "slot": "helmet",
-      "image": "helmet_iron_back.png"
+      "image": "helmet_iron_back.png",
+      "in_sheet": false
     },
     {
       "name": "helmet_gold",
       "slot": "helmet",
-      "image": "helmet_gold_back.png"
+      "image": "helmet_gold_back.png",
+      "in_sheet": false
     }
   ]
 }

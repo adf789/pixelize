@@ -34,6 +34,14 @@ VIEW_AXES = {
     "left": np.array([[0, 0, -1], [0, 1, 0], [1, 0, 0]], float),
     "right": np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], float),
 }
+# 대각선(45도): 이웃한 두 방향의 가운데. 예) 앞왼쪽은 앞(화면 x = X)과 왼쪽(화면 x = -Z) 사이
+_H = 2 ** -0.5
+VIEW_AXES.update({
+    "front_left": np.array([[_H, 0, -_H], [0, 1, 0], [_H, 0, _H]]),
+    "back_left": np.array([[-_H, 0, -_H], [0, 1, 0], [_H, 0, -_H]]),
+    "front_right": np.array([[_H, 0, _H], [0, 1, 0], [-_H, 0, _H]]),
+    "back_right": np.array([[-_H, 0, _H], [0, 1, 0], [-_H, 0, -_H]]),
+})
 BONE_CHANNELS = ("swing", "spread", "twist", "len")
 ROOT_CHANNELS = ("x", "y", "fwd", "swing", "spread", "twist")
 UP_KINDS = ("torso", "head")  # 위로 뻗은 뼈: swing + 가 앞으로 숙이기가 되게 부호를 바꾼다
@@ -77,7 +85,10 @@ def local_rotation(name, ch):
 
 
 def in_plane(view, spread, swing):
-    return {"front": spread, "back": -spread, "left": swing, "right": -swing}[view]
+    # 회전값이 한 바퀴 건너뛰지 않게 고를 때 기준으로만 쓴다 (대각선은 두 방향의 평균)
+    return {"front": spread, "back": -spread, "left": swing, "right": -swing,
+            "front_left": _H * (spread + swing), "back_left": _H * (swing - spread),
+            "front_right": _H * (spread - swing), "back_right": -_H * (spread + swing)}[view]
 
 
 def wrap(d):
@@ -238,10 +249,14 @@ def convert(anim, model, t):
 
 def view_anim(data, view):
     """공통 동작 파일 → 한 방향의 동작. views.<방향> 의 값(trail, view_swap, 2D keys 등)이 그 방향에만 덧붙는다.
-    2D keys 는 바꾼 자세 위에 더해진다 (그 방향만 손볼 때)."""
+    2D keys 는 바꾼 자세 위에 더해진다 (그 방향만 손볼 때).
+    views.<방향>.common 은 공통 채널을 그 방향에서만 바꿔 쓴다 (뼈·채널 단위로 통째로 바꿈).
+    예: 앞 그림 구르기는 몸 전체를 앞으로 돌리면 납작한 그림이 뒤집히기만 하니, 앞 그림에서는 root swing 을 작게."""
     extra = data.get("views", {}).get(view, {})
     out = {k: v for k, v in data.items() if k not in ("views", "keys")}
-    out.update({k: v for k, v in extra.items() if k != "keys"})
-    out["common"] = data.get("keys", {})
+    out.update({k: v for k, v in extra.items() if k not in ("keys", "common")})
+    out["common"] = {bone: dict(chans) for bone, chans in data.get("keys", {}).items()}
+    for bone, chans in extra.get("common", {}).items():
+        out["common"].setdefault(bone, {}).update(chans)
     out["keys"] = extra.get("keys", {})
     return out
