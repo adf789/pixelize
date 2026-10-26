@@ -726,6 +726,7 @@ function renderTimeline() {
   times.forEach((t, i) => {
     const c = document.createElement("div");
     c.className = "cell" + (i === st.frame ? " cur" : "");
+    c.dataset.i = i;
     const swap = (st.anim.view_swap || []).some((s) => s.from <= t && t < s.to);
     if (swap) c.classList.add("swap");
     if (trail.includes(i)) c.classList.add("trail");
@@ -734,7 +735,7 @@ function renderTimeline() {
     if (hasKey(st.bone, t)) dots.push(`<span class="dot sel${keyIsEase(st.bone, t) ? " ease" : ""}"></span>`);
     c.innerHTML = `<div class="num">#${i}</div><div class="dots">${dots.join("")}</div>
       <input type="number" min="10" max="2000" value="${durs[i]}" title="이 프레임에 머무는 시간(ms)">`;
-    c.addEventListener("click", (e) => { if (e.target.tagName !== "INPUT") { st.frame = i; render(); renderTimeline(); } });
+    c.addEventListener("click", (e) => { if (e.target.tagName !== "INPUT") goFrame(i); });
     const inp = c.querySelector("input");
     inp.disabled = st.readOnly;
     inp.addEventListener("change", (e) => {
@@ -745,10 +746,38 @@ function renderTimeline() {
     });
     tl.appendChild(c);
   });
+  const slider = $("frameSlider");
+  slider.max = st.anim.frames - 1;
+  if (document.activeElement !== slider) slider.value = st.frame;
   const total = durs.reduce((a, b) => a + b, 0);
   $("timeInfo").textContent = `${st.anim.frames}프레임 · 한 번 ${total}ms · ${st.anim.loop ? "반복" : "한 번"} · 곡선: ${st.anim.interp}` +
     (st.anim.view_swap ? " · 보라 줄 = 다른 방향 그림" : "") + (trail.length ? " · 흰 줄 = 궤적" : "");
 }
+
+function goFrame(i) {
+  i = Math.max(0, Math.min(st.anim.frames - 1, i));
+  if (i === st.frame) return;
+  st.frame = i;
+  render(); renderTimeline();
+}
+
+// 끌어서 프레임 넘겨 보기: 아래 슬라이더, 또는 시간표 칸 위를 누른 채 좌우로 끌기
+$("frameSlider").addEventListener("pointerdown", () => { if (st.playing) togglePlay(); });
+$("frameSlider").addEventListener("input", (e) => goFrame(parseInt(e.target.value)));
+let scrubbing = false;
+$("timeline").addEventListener("pointerdown", (e) => {
+  if (e.target.tagName === "INPUT" || !e.target.closest(".cell")) return;
+  scrubbing = true;
+  if (st.playing) togglePlay();
+  e.preventDefault();
+});
+window.addEventListener("pointermove", (e) => {
+  if (!scrubbing) return;
+  const cell = document.elementFromPoint(e.clientX, e.clientY);
+  const c = cell && cell.closest && cell.closest(".cell");
+  if (c) goFrame(parseInt(c.dataset.i));
+});
+window.addEventListener("pointerup", () => { scrubbing = false; });
 
 function setStatus(msg) {
   const s = $("status");
@@ -1025,6 +1054,14 @@ $("newBtn").onclick = async () => {
   await loadAnim(key);
 };
 window.addEventListener("keydown", (e) => {
+  // Ctrl+S: 저장 (글자 칸에서 입력 중이어도 그 값을 먼저 반영하고 저장)
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+    e.preventDefault();
+    if (document.activeElement && document.activeElement.blur) document.activeElement.blur();
+    if (st.readOnly) setStatus("읽기 전용이라 저장하지 않았습니다");
+    else save().catch((err) => alert(err.message));
+    return;
+  }
   // Ctrl+Z / Ctrl+Y (Ctrl+Shift+Z): 글자 칸에서 입력 중일 때는 브라우저 기본 동작에 맡긴다
   const typing = e.target.tagName === "INPUT" && (e.target.type === "number" || e.target.type === "text");
   if ((e.ctrlKey || e.metaKey) && !typing) {

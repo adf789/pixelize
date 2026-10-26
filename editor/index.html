@@ -76,7 +76,7 @@
   <button id="newBtn">새 동작</button>
   <button id="undoBtn" title="되돌리기 (Ctrl+Z)" disabled>↶</button>
   <button id="redoBtn" title="다시 하기 (Ctrl+Y)" disabled>↷</button>
-  <button id="saveBtn">저장</button>
+  <button id="saveBtn" title="저장 (Ctrl+S)">저장</button>
   <button id="renderBtn" class="primary">픽셀로 만들기</button>
   <span id="status">불러오는 중…</span>
 </header>
@@ -93,7 +93,8 @@
     <div id="stageHint">
       뼈 클릭 → 고르기 · 끌기 → 돌리기 · <kbd>Shift</kbd>+끌기 → 몸 전체 옮기기 · <kbd>Alt</kbd>+위아래 끌기 → 앞뒤로 기울이기 ·
       <kbd>←</kbd><kbd>→</kbd> 프레임 · <kbd>Space</kbd> 재생 · <kbd>K</kbd> 열쇠 넣기 · <kbd>Del</kbd> 열쇠 지우기 ·
-      <kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기 · <kbd>Ctrl</kbd>+<kbd>Y</kbd> 다시 하기
+      <kbd>Ctrl</kbd>+<kbd>Z</kbd> 되돌리기 · <kbd>Ctrl</kbd>+<kbd>Y</kbd> 다시 하기 · <kbd>Ctrl</kbd>+<kbd>S</kbd> 저장 ·
+      시간표 칸이나 아래 슬라이더를 끌면 프레임을 넘겨 봄
     </div>
   </div>
   <aside>
@@ -134,6 +135,7 @@
 <footer>
   <div class="row">
     <button id="playBtn">▶ 재생</button>
+    <input type="range" id="frameSlider" min="0" max="0" step="1" value="0" title="끌어서 프레임 넘겨 보기" style="flex:1; max-width:520px">
     <span class="muted" id="timeInfo"></span>
   </div>
   <div id="timeline"></div>
