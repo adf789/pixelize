@@ -7,9 +7,16 @@
   spread : 옆으로 벌리기 (Z 축 회전). 팔다리는 +면 몸 바깥쪽 (왼쪽·오른쪽이 서로 거울). 앞 그림에서 그대로 보인다.
            몸통·머리 같은 가운데 뼈는 +면 앞 그림에서 시계 방향.
   twist  : 뼈를 제 축으로 비틀기. 팔다리는 +면 바깥쪽으로 (좌우 거울).
+  돌리는 순서: twist → spread → swing. 그래서 swing 90(팔을 앞으로 듦)에서 spread 를 바꾸면 팔이 수평으로 쓸고 지나간다
+  (가로 베기). spread 90(옆으로 듦)에서는 swing 이 제 축 돌리기가 된다.
   len    : 뼈 길이 비율 (2D 와 같음, 자식에게 이어짐).
 root (몸 전체): x = 캐릭터 왼쪽으로, y = 아래로, fwd = 앞으로 (칸 단위, 2D 의 x/y 와 같은 크기),
-  swing = 앞으로 숙이기, spread = 앞 그림에서 시계 방향으로 기울이기, twist = 제자리에서 캐릭터 왼쪽으로 돌기.
+  swing = 앞으로 숙이기, spread = 앞 그림에서 시계 방향으로 기울이기, twist = 제자리에서 캐릭터 왼쪽으로 돌기,
+  ground = 바닥 붙이기 (0~1). 1 이면 몸(칼·망토 빼고)의 가장 낮은 곳이 쉼 자세의 발 높이에 닿도록 몸 전체를 올리고 내린다
+  (무릎을 굽히면 몸이 저절로 내려앉고, 구르면 몸이 바닥을 따라 구른다). y 는 그 위에 더한다. 공중에 뜨는 구간은 0 으로.
+
+따라 움직임: 동작 파일의 "follow": {"cape": {"of": "torso", "lag": 2, "gain": 1}} — cape 는 root~torso 가 돈 만큼
+  lag 프레임 늦게 따라 돈다 (그동안 원래 방향을 붙잡고 있다가 뒤늦게 따라온다). 그 방향 rig 에 없는 뼈는 건너뛴다.
 
 뼈 조각은 쉼 자세에서 화면에 평평하게 놓인 카드로 보고, 3D 로 돌린 카드를 그 방향 화면에 비춘 모양을
 2D 의 rot(돌리기)·tilt(뼈 방향으로 짧아짐)·turn(폭이 좁아짐)으로 나눈다. 앞뒤 순서(z)는 3D 로 보는 사람 쪽에 나온 만큼.
@@ -66,7 +73,7 @@ def local_rotation(name, ch):
     up = -1 if kind_of(name) in UP_KINDS else 1
     spread, swing, twist = m * ch.get("spread", 0), up * ch.get("swing", 0), m * ch.get("twist", 0)
     axis = TWIST_AXIS.get(kind_of(name), (0, 1, 0))
-    return rot_z(spread) @ rot_x(swing) @ rot_axis(axis, twist), spread, swing
+    return rot_x(swing) @ rot_z(spread) @ rot_axis(axis, twist), spread, swing
 
 
 def in_plane(view, spread, swing):
@@ -111,11 +118,62 @@ def sample_channels(keys, t, anim):
             for bone, chans in keys.items()}
 
 
+def chain_of(model, bone):
+    """root 다음부터 bone 까지 뼈 이름 (부모 먼저)."""
+    parents = {name: parent for name, parent, _, _ in model.bones}
+    out = []
+    while bone:
+        out.insert(0, bone)
+        bone = parents.get(bone)
+    return out
+
+
+def turned(vals, chain):
+    """root 와 chain 뼈들이 실제로 돈 각도의 합 (swing 축, spread 축). 위로 뻗은 뼈·root 의 swing 부호를 맞춘다."""
+    rc = vals.get("root", {})
+    swing, spread = -rc.get("swing", 0), rc.get("spread", 0)
+    for name in chain:
+        ch = vals.get(name, {})
+        swing += (-1 if kind_of(name) in UP_KINDS else 1) * ch.get("swing", 0)
+        spread += (-1 if name.endswith("_l") else 1) * ch.get("spread", 0)
+    return swing, spread
+
+
+def apply_follow(anim, model, t, vals):
+    """follow 뼈에 '조금 전 시각에 부모 쪽이 돈 각도 - 지금 돈 각도' 를 더한다."""
+    names = {b[0] for b in model.bones}
+    n = anim.get("frames", 8)
+    step = 1 / n if anim.get("loop") else 1 / max(1, n - 1)
+    for bone, f in anim.get("follow", {}).items():
+        if bone not in names or f["of"] not in names:
+            continue
+        chain = chain_of(model, f["of"])
+        t0 = t - f.get("lag", 2) * step
+        t0 = t0 % 1 if anim.get("loop") else max(0.0, t0)
+        now, before = turned(vals, chain), turned(sample_channels(anim["common"], t0, anim), chain)
+        gain = f.get("gain", 1.0)
+        ch = vals.setdefault(bone, {})
+        ch["swing"] = ch.get("swing", 0) + gain * (before[0] - now[0]) * (-1 if kind_of(bone) in UP_KINDS else 1)
+        ch["spread"] = ch.get("spread", 0) + gain * (before[1] - now[1]) * (-1 if bone.endswith("_l") else 1)
+
+
+def ground_shift(model, pose):
+    """몸(기본 뼈)의 가장 낮은 곳이 쉼 자세의 가장 낮은 곳(발)에 오려면 몸을 아래로 옮길 칸 수."""
+    rest = neutral(model)
+    feet = [b for b in an.BONE_NAMES if b in rest]
+    mats = an.bone_matrices(model.bones, model.joints, pose, model.unit)
+    by_name = {name: (j0, j1) for name, _, j0, j1 in model.bones}
+    low_rest = max(max(rest[b][0][1], rest[b][1][1]) for b in feet)
+    low_now = max((mats[b] @ [*model.joints[j], 1])[1] for b in feet for j in by_name[b])
+    return (low_rest - low_now) / model.unit
+
+
 def convert(anim, model, t):
     """공통 동작의 시각 t 자세 → 이 모델(방향) 의 2D 자세 (base_pose 포함)."""
     view = model.view
     va = VIEW_AXES[view]
     vals = sample_channels(anim["common"], t, anim)
+    apply_follow(anim, model, t, vals)
     rest = neutral(model)
     joints = model.joints
     center = (np.asarray(joints["pelvis"], float) + joints["neck"]) / 2
@@ -173,6 +231,8 @@ def convert(anim, model, t):
             if abs(dx) + abs(dy) > 1e-6:
                 p["x"] = p.get("x", 0) + dx
                 p["y"] = p.get("y", 0) + dy
+    if rc.get("ground", 0):
+        root["y"] += rc["ground"] * ground_shift(model, pose)
     return pose
 
 

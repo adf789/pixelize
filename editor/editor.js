@@ -3,7 +3,7 @@
 "use strict";
 
 const CHANNELS = ["rot", "len", "x", "y", "tilt", "turn", "z"];
-const DEFAULT = { rot: 0, len: 1, x: 0, y: 0, tilt: 0, turn: 0, z: 0, swing: 0, spread: 0, twist: 0, fwd: 0 };
+const DEFAULT = { rot: 0, len: 1, x: 0, y: 0, tilt: 0, turn: 0, z: 0, swing: 0, spread: 0, twist: 0, fwd: 0, ground: 0 };
 const CHANNEL_UI = {   // [최소, 최대, 간격, 설명]
   rot: [-360, 360, 1, "회전 (화면 시계 방향 +)"],
   len: [0.3, 1.6, 0.01, "뼈 방향 길이 비율"],
@@ -15,7 +15,7 @@ const CHANNEL_UI = {   // [최소, 최대, 간격, 설명]
 };
 // 공통 동작(anims/common/)의 채널 — common_anim.py 의 설명과 같다
 const BONE_COMMON = ["swing", "spread", "twist", "len"];
-const ROOT_COMMON = ["x", "y", "fwd", "swing", "spread", "twist"];
+const ROOT_COMMON = ["x", "y", "fwd", "swing", "spread", "twist", "ground"];
 const COMMON_UI = {
   swing: [-360, 360, 1, "앞뒤로 휘두르기 — 팔다리 끝이 앞으로 +, 몸통·머리·몸 전체는 앞으로 숙이기 + (옆 그림에서 끌기)"],
   spread: [-360, 360, 1, "옆으로 벌리기 — 팔다리는 바깥쪽 +, 가운데 뼈는 앞 그림에서 시계 방향 + (앞 그림에서 끌기)"],
@@ -24,6 +24,7 @@ const COMMON_UI = {
   x: [-30, 30, 0.5, "캐릭터 왼쪽으로 이동 (칸) — 앞 그림에서 오른쪽"],
   y: CHANNEL_UI.y,
   fwd: [-30, 30, 0.5, "앞으로 이동 (칸) — 옆 그림에서 얼굴 쪽"],
+  ground: [0, 1, 0.05, "바닥 붙이기 — 1 이면 가장 낮은 발이 바닥에 닿게 몸을 올리고 내림 (공중은 0)"],
 };
 
 const st = {
@@ -197,7 +198,7 @@ function localRotation(name, ch) {
   const m = name.endsWith("_l") ? -1 : 1, up = UP_KINDS.includes(kindOf(name)) ? -1 : 1;
   const spread = m * (ch.spread || 0), swing = up * (ch.swing || 0), twist = m * (ch.twist || 0);
   const axis = TWIST_AXIS[kindOf(name)] || [0, 1, 0];
-  return [[rot3.z(spread), rot3.x(swing), rot3.axis(axis, twist)].reduce(mat.mul), spread, swing];
+  return [[rot3.x(swing), rot3.z(spread), rot3.axis(axis, twist)].reduce(mat.mul), spread, swing];
 }
 
 function inPlane(view, spread, swing) {
@@ -225,13 +226,70 @@ function neutralOf(sc) {
   return sc._neutral;
 }
 
-function convertCommon(anim, sc, t) {
-  const view = sc.view, va = VIEW_AXES[view], vaT = transpose(va);
+function sampleCommon(anim, t) {
   const vals = {};
   for (const [bone, chans] of Object.entries(anim.common || {})) {
     vals[bone] = {};
     for (const [ch, keys] of Object.entries(chans)) if (keys.length) vals[bone][ch] = sampleChannel(anim, keys, t);
   }
+  return vals;
+}
+
+function chainOf(sc, bone) {               // common_anim.chain_of
+  const parents = {};
+  for (const [name, parent] of sc.bones) parents[name] = parent;
+  const out = [];
+  while (bone) { out.unshift(bone); bone = parents[bone]; }
+  return out;
+}
+
+function turned(vals, chain) {             // common_anim.turned
+  const rc = vals.root || {};
+  let swing = -(rc.swing || 0), spread = rc.spread || 0;
+  for (const name of chain) {
+    const ch = vals[name] || {};
+    swing += (UP_KINDS.includes(kindOf(name)) ? -1 : 1) * (ch.swing || 0);
+    spread += (name.endsWith("_l") ? -1 : 1) * (ch.spread || 0);
+  }
+  return [swing, spread];
+}
+
+function applyFollow(anim, sc, t, vals) {  // common_anim.apply_follow
+  const names = new Set(sc.bones.map((b) => b[0]));
+  const n = anim.frames || 8, step = anim.loop ? 1 / n : 1 / Math.max(1, n - 1);
+  for (const [bone, f] of Object.entries(anim.follow || {})) {
+    if (!names.has(bone) || !names.has(f.of)) continue;
+    const chain = chainOf(sc, f.of);
+    let t0 = t - (f.lag === undefined ? 2 : f.lag) * step;
+    t0 = anim.loop ? ((t0 % 1) + 1) % 1 : Math.max(0, t0);
+    const now = turned(vals, chain), before = turned(sampleCommon(anim, t0), chain);
+    const gain = f.gain === undefined ? 1 : f.gain;
+    const ch = vals[bone] || (vals[bone] = {});
+    ch.swing = (ch.swing || 0) + gain * (before[0] - now[0]) * (UP_KINDS.includes(kindOf(bone)) ? -1 : 1);
+    ch.spread = (ch.spread || 0) + gain * (before[1] - now[1]) * (bone.endsWith("_l") ? -1 : 1);
+  }
+}
+
+// animate.BONE_NAMES — 바닥 붙이기는 칼·망토 같은 추가 뼈를 빼고 이 뼈들의 가장 낮은 곳으로 잰다
+const BODY_BONES = ["torso", "head", "upper_arm_l", "forearm_l", "hand_l", "upper_arm_r", "forearm_r", "hand_r",
+  "thigh_l", "shin_l", "foot_l", "thigh_r", "shin_r", "foot_r"];
+
+function groundShift(sc, pose) {           // common_anim.ground_shift
+  const rest = neutralOf(sc), feet = BODY_BONES.filter((b) => rest[b]);
+  const mats = boneMatrices(sc, pose);
+  let lowRest = -Infinity, lowNow = -Infinity;
+  for (const [name, , j0, j1] of sc.bones) {
+    if (!feet.includes(name)) continue;
+    lowRest = Math.max(lowRest, rest[name][0][1], rest[name][1][1]);
+    for (const j of [j0, j1]) lowNow = Math.max(lowNow, mat.apply(mats[name], sc.joints[j])[1]);
+  }
+  return (lowRest - lowNow) / sc.unit;
+}
+
+function convertCommon(anim, sc, t) {
+  const view = sc.view, va = VIEW_AXES[view], vaT = transpose(va);
+  const vals = sampleCommon(anim, t);
+  applyFollow(anim, sc, t, vals);
   const rest = neutralOf(sc), J = sc.joints;
   const center = [(J.pelvis[0] + J.neck[0]) / 2, (J.pelvis[1] + J.neck[1]) / 2];
   const torsoLen = Math.hypot(J.neck[0] - J.pelvis[0], J.neck[1] - J.pelvis[1]);
@@ -289,6 +347,7 @@ function convertCommon(anim, sc, t) {
       if (Math.abs(dx) + Math.abs(dy) > 1e-6) { p.x = (p.x || 0) + dx; p.y = (p.y || 0) + dy; }
     }
   }
+  if (rc.ground) root.y += rc.ground * groundShift(sc, pose);
   return pose;
 }
 

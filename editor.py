@@ -1,8 +1,9 @@
 """동작 편집기 서버. 브라우저에서 동작을 재생하며 뼈를 조절하고, 지금 쓰는 동작 JSON 형식 그대로 저장한다.
 
 사용법:
-    python editor.py [캐릭터폴더] [--port 8765]
-    → 브라우저에서 http://127.0.0.1:8765 를 연다.
+    python editor.py [캐릭터폴더] [--port 8765] [--open]
+    → 브라우저에서 출력된 주소(기본 http://127.0.0.1:8765)를 연다. --open 이면 브라우저를 저절로 연다.
+    그 포트를 다른 프로그램이 쓰고 있으면 다음 포트(8766, 8767, …)를 쓴다.
 
 편집기(editor/editor.js)는 animate.py 와 똑같은 규칙(뼈 행렬, 열쇠 곡선, view_swap)으로 자세를 계산해 그린다.
 그림 조각은 parts.PartModel 이 쓰는 것과 같은 텍스처·자리 행렬을 넘겨주므로, 편집기에서 본 자세와 픽셀 결과가 어긋나지 않는다.
@@ -13,6 +14,7 @@ import json
 import os
 import subprocess
 import sys
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -216,15 +218,34 @@ def format_anim(data):
     return "\n".join(lines) + "\n"
 
 
+class EditorServer(ThreadingHTTPServer):
+    # Windows 에서는 주소 재사용을 켜면 다른 프로그램이 이미 쓰는 포트도 오류 없이 열려서,
+    # 브라우저가 그 프로그램에 붙는다. 꺼서 이미 쓰는 포트면 오류가 나게 한다.
+    allow_reuse_address = False
+
+
+def open_server(handler, port, tries=20):
+    for p in range(port, port + tries):
+        try:
+            return EditorServer(("127.0.0.1", p), handler), p
+        except OSError:
+            print(f"포트 {p} 는 다른 프로그램이 쓰고 있어 다음 포트를 찾습니다", flush=True)
+    sys.exit(f"{port}~{port + tries - 1} 포트를 모두 쓰고 있습니다. --port 로 다른 번호를 주세요")
+
+
 def main():
     parser = argparse.ArgumentParser(description="동작 편집기 서버")
     parser.add_argument("character", type=Path, nargs="?", default=HERE / "characters" / "warrior")
     parser.add_argument("-c", "--config", type=Path, default=HERE / "config.json")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8765)))
+    parser.add_argument("--open", action="store_true", help="브라우저를 저절로 연다")
     args = parser.parse_args()
     scenes = Scenes(args.character.resolve(), args.config.resolve())
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(scenes))
-    print(f"동작 편집기: http://127.0.0.1:{args.port}  (끝내려면 Ctrl+C)", flush=True)
+    server, port = open_server(make_handler(scenes), args.port)
+    url = f"http://127.0.0.1:{port}"
+    print(f"동작 편집기: {url}  (끝내려면 Ctrl+C)", flush=True)
+    if args.open:
+        webbrowser.open(url)
     server.serve_forever()
 
 

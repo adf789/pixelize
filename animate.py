@@ -936,6 +936,25 @@ def chain_angle(model, pose, bone):
     return total
 
 
+def weapon_spin(model, pose, prev_pose, bone, screen=False):
+    """한 프레임 사이에 무기가 돈 각도. 방향별 동작은 회전값(chain_angle)으로 잰다.
+    공통 동작(screen=True)은 화면에 보이는 칼날 방향으로 잰다 — 칼이 보는 사람 쪽을 지날 때
+    회전값이 180도 건너뛰어도(짧아진 칼을 뒤집어 그리는 것) 화면에서는 이어져 보이기 때문이다.
+    칼이 반보다 짧아 보이는(보는 사람 쪽을 향한) 프레임이 끼면 방향이 의미 없으니 0 으로 본다."""
+    if not screen:
+        return abs(chain_angle(model, pose, bone) - chain_angle(model, prev_pose, bone))
+    j0, j1 = next((b[2], b[3]) for b in model.bones if b[0] == bone)
+    full = float(np.linalg.norm(np.subtract(model.joints[j1], model.joints[j0])))
+    angles = []
+    for p in (pose, prev_pose):
+        m = bone_matrices(model.bones, model.joints, p, model.unit)[bone]
+        s, e = m @ [*model.joints[j0], 1], m @ [*model.joints[j1], 1]
+        if math.hypot(e[0] - s[0], e[1] - s[1]) < 0.5 * full:
+            return 0.0
+        angles.append(math.degrees(math.atan2(e[1] - s[1], e[0] - s[0])))
+    return abs((angles[0] - angles[1] + 180) % 360 - 180)
+
+
 def joint_cover(model, pose, img):
     """관절마다 (둘레 원 안이 칠해진 비율, 부모·자식 뼈가 들고 간 관절 위치의 거리(64칸 기준 픽셀)).
     조각 방식만 잰다 (그물 방식은 늘어나서 틈이 생기지 않는다). 원이 절반 넘게 칸 밖이면 뺀다 (잘림 경고가 따로 난다)."""
@@ -962,7 +981,7 @@ def joint_cover(model, pose, img):
     return out
 
 
-def frame_warnings(frame_models, poses, frames, loop, trailed=()):
+def frame_warnings(frame_models, poses, frames, loop, trailed=(), screen_spin=False):
     """프레임마다 경고 목록: 칸 밖 잘림, 관절 벌어짐·틈, 순간이동, 무기 큰 회전.
     frame_models: 프레임마다 그린 모델 (view_swap 으로 바뀔 수 있다). 모델이 바뀌는 프레임 사이는 비교하지 않는다.
     trailed: 궤적 효과를 그린 프레임 (무기 큰 회전을 경고하지 않는다)."""
@@ -990,7 +1009,7 @@ def frame_warnings(frame_models, poses, frames, loop, trailed=()):
                 if d > JUMP_LIMIT:
                     warn.append(f"{bone} 순간이동 ({prev}→{i}번 프레임 {d:.0f}칸)")
             for bone in ([] if i in trailed else model.weapon_bones):
-                spin = abs(chain_angle(model, pose, bone) - chain_angle(model, poses[prev], bone))
+                spin = weapon_spin(model, pose, poses[prev], bone, screen_spin)
                 if spin > SPIN_LIMIT:
                     warn.append(f"{bone} 한 프레임에 {spin:.0f}도 회전 ({prev}→{i}번) → 중간 프레임이나 궤적 효과 필요")
         out.append(warn)
@@ -1192,8 +1211,10 @@ def cmd_render(args):
                 # 베는 프레임에는 칼날이 지나간 자리를 몸 뒤에 칠한다 (궤적 효과, 합친 시트에만).
                 # "trail": true 면 무기가 크게 돈 프레임 모두, [3] 처럼 목록이면 그 프레임만.
                 trail_on = anim.get("trail")
-                spin = max([abs(chain_angle(fm, pose, w) - chain_angle(fm, poses[i - 1], w))
-                            for w in fm.weapon_bones] + [0]) if i > 0 and frame_models[i - 1] is fm else 0
+                # 궤적을 그릴 프레임을 직접 고른 경우(목록)는 칼이 짧아 보이는 프레임이 끼어도 그리도록 회전값으로 잰다
+                same = i > 0 and frame_models[i - 1] is fm
+                spin = max([weapon_spin(fm, pose, poses[i - 1], w, "common" in anim and trail_on is True)
+                            for w in fm.weapon_bones] + [0]) if same else 0
                 if (trail_on is True and spin > SPIN_LIMIT) or (isinstance(trail_on, list) and i in trail_on and spin > 0):
                     mask = weapon_trail(anim, models, view, times[i - 1], t, fm.size, spin)
                     if mask is not None:
@@ -1208,7 +1229,7 @@ def cmd_render(args):
                 pix_frames.append(small)
 
             name = f"{view}_{stem}"
-            warns = frame_warnings(frame_models, poses, hi_frames, anim["loop"], trailed)
+            warns = frame_warnings(frame_models, poses, hi_frames, anim["loop"], trailed, "common" in anim)
             for i, ws in enumerate(warns):
                 for w in ws:
                     print(f"  주의 {name} {i}번 프레임: {w}")
