@@ -153,7 +153,8 @@ def enclosed_holes(mask):
 def apply_claims(labels, src, silhouette, rig, names, joints):
     """추가 뼈의 claim: 상자 안에서 색(색상 각도)이 맞는 픽셀은 그 뼈 조각으로 가져온다.
     등을 덮은 망토처럼 몸통·다리와 겹쳐 그려져 거리로는 가를 수 없는 부분에 쓴다.
-    "claim": {"hue": [-12, 12], "box": [x0, y0, x1, y1]} — 색상 각도(빨강 0도 기준, 도), 원본 픽셀 상자.
+    "claim": {"hue": [-12, 12], "box": [x0, y0, x1, y1], "sat": 0.35} — 색상 각도(빨강 0도 기준, 도), 원본 픽셀 상자,
+    채도 하한(갈색 가죽처럼 색상이 비슷한 재질을 빼려면 올린다).
     여러 뼈가 같은 픽셀을 원하면 그 뼈 선분에 가장 가까운 쪽이 갖는다."""
     claims = [e for e in rig.get("extra_bones", []) if e.get("claim")]
     if not claims:
@@ -170,7 +171,7 @@ def apply_claims(labels, src, silhouette, rig, names, joints):
         x0, y0, x1, y1 = c["box"]
         lo, hi = c["hue"]
         want = (silhouette & (xx >= x0) & (xx < x1) & (yy >= y0) & (yy < y1)
-                & (hue >= lo) & (hue <= hi) & (sat > 0.35) & (val > 0.15))
+                & (hue >= lo) & (hue <= hi) & (sat > c.get("sat", 0.35)) & (val > 0.15))
         a, b = np.array(joints[e["name"] + "_start"], float), np.array(joints[e["name"] + "_end"], float)
         d = b - a
         t = np.clip(((xx - a[0]) * d[0] + (yy - a[1]) * d[1]) / max(d @ d, 1e-9), 0, 1)

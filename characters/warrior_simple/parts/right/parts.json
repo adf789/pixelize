@@ -1,0 +1,86 @@
+{
+  "view": "right",
+  "image": "right.png",
+  "parts": [
+    {
+      "name": "cape",
+      "file": "cape.png",
+      "depth": 0.5,
+      "pixels": 18620,
+      "filled": 135,
+      "cap": 3
+    },
+    {
+      "name": "thigh_r",
+      "file": "thigh_r.png",
+      "depth": 2,
+      "pixels": 6042,
+      "filled": 625,
+      "cap": 2160
+    },
+    {
+      "name": "shin_r",
+      "file": "shin_r.png",
+      "depth": 2,
+      "pixels": 7368,
+      "filled": 0,
+      "cap": 1093
+    },
+    {
+      "name": "foot_r",
+      "file": "foot_r.png",
+      "depth": 2,
+      "pixels": 4549,
+      "filled": 0,
+      "cap": 525
+    },
+    {
+      "name": "hips",
+      "file": "hips.png",
+      "depth": 2.5,
+      "pixels": 3831,
+      "filled": 59,
+      "cap": 1160
+    },
+    {
+      "name": "torso",
+      "file": "torso.png",
+      "depth": 3,
+      "pixels": 7635,
+      "filled": 7968,
+      "cap": 1046
+    },
+    {
+      "name": "head",
+      "file": "head.png",
+      "depth": 4,
+      "pixels": 30017,
+      "filled": 134,
+      "cap": 261
+    },
+    {
+      "name": "upper_arm_r",
+      "file": "upper_arm_r.png",
+      "depth": 5,
+      "pixels": 5985,
+      "filled": 0,
+      "cap": 150
+    },
+    {
+      "name": "forearm_r",
+      "file": "forearm_r.png",
+      "depth": 5,
+      "pixels": 3087,
+      "filled": 0,
+      "cap": 1407
+    },
+    {
+      "name": "hand_r",
+      "file": "hand_r.png",
+      "depth": 5,
+      "pixels": 1177,
+      "filled": 0,
+      "cap": 490
+    }
+  ]
+}

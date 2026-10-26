@@ -273,7 +273,7 @@ def open_server(handler, port, tries=20):
 
 def main():
     parser = argparse.ArgumentParser(description="동작 편집기 서버")
-    parser.add_argument("character", type=Path, nargs="?", default=HERE / "characters" / "warrior")
+    parser.add_argument("character", type=Path, nargs="?", default=HERE / "characters" / "warrior_simple")
     parser.add_argument("-c", "--config", type=Path, default=HERE / "config.json")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8765)))
     parser.add_argument("--open", action="store_true", help="브라우저를 저절로 연다")

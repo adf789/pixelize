@@ -145,7 +145,7 @@ animate.bat parts  characters\warrior --views right      # 그 방향 조각만 
 브라우저에서 동작을 **재생하며** 뼈를 마우스로 조절하고, 동작 JSON 형식 그대로 저장한다. 몸놀림 설계는 `docs\motion_design.md`.
 
 ```
-editor.bat                     # → 브라우저에서 http://127.0.0.1:8765
+editor.bat                     # → 기본 캐릭터 characters\warrior_simple, 브라우저가 저절로 열린다
 editor.bat characters\다른캐릭터  # 다른 캐릭터 (조각이 있어야 한다)
 ```
 
@@ -191,6 +191,13 @@ editor.bat characters\다른캐릭터  # 다른 캐릭터 (조각이 있어야 �
 - 공통 동작의 무기 회전 경고는 화면에 보이는 칼날 방향으로 잰다. 칼이 보는 사람 쪽을 향해 반보다 짧아 보이는 프레임은 재지 않는다.
 - 초안 8개(`idle` `walk` `run` `attack` `attack2` `skill` `roll` `dash`)가 `anims\common\` 에 있다 (`docs\motion_design.md` 설계대로). 예전 방향별 파일(`animsront` 등)은 지웠다 (git 기록에 남아 있다). 방향별 동작 형식은 지금도 쓸 수 있다.
 - 오른쪽 그림이 없으면 `animate.bat mirror 캐릭터 left right` 로 왼쪽 그림을 뒤집어 만든다. 칼은 어느 방향에서도 오른손(`hand_r`)에 있고, 왼쪽 그림에서는 몸 뒤, 오른쪽 그림에서는 몸 앞에 그린다.
+
+## 캐릭터
+
+- `characters\warrior_simple` (기본): 픽셀로 줄이기 좋게 단순하게 다시 뽑은 원본(큰 머리, 큰 단색 덩어리, 굵은 외곽선). 결과 `output\warrior_simple`.
+- `characters\warrior`: 처음 뽑은 상세한 일러스트. 줄이면 잔무늬가 얼룩이 되어 비교용으로 남겨 둔다.
+- 픽셀 결과는 줄이는 방법보다 **원본 그림의 설계**가 크게 좌우한다. 뽑는 법은 `docs\extra_art_guide.md` 의 ③.
+- 망토 색 가져오기(`claim`)에 `"sat"`(채도 하한)을 주면 망토와 색상이 비슷한 갈색 가죽이 딸려 가지 않는다.
 
 ## 8방향 (대각선 그림)
 

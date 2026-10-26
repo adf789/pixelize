@@ -87,3 +87,77 @@ same glove as the reference image, thick dark outline, flat colors, no shadow, p
    - 대각선: 방향 목록에 `front_left`, `back_left` (+ 뒤집은 오른쪽) 를 더하고, 관절 찾기 → 조각 → 공통 동작이 그 방향으로도 바뀌게 한다.
    - 부위 각도: 칼·손을 기운 정도에 따라 바꿔 끼우는 기능을 넣는다.
 3. 네 방향과 같은 확인(프레임별 큰 그림, 경고, 편집기와 계산 일치)을 한다.
+
+---
+
+## ③ 픽셀로 줄이기 좋은 단순한 원본 (다시 뽑기)
+
+키 50칸 안팎의 픽셀 캐릭터는 **큰 단색 덩어리 몇 개**로 읽힌다. 상세한 일러스트를 줄이면 잔무늬가 얼룩이 된다.
+그래서 원본부터 "50칸에서 보일 것만" 남긴 그림으로 뽑는다.
+
+### 설계 규칙
+
+| 규칙 | 이유 |
+| --- | --- |
+| 재질은 5~6가지만 (예: 빨간 망토, 은색 갑옷, 흰 천, 갈색 가죽, 피부, 갈색 머리) | 64칸 팔레트 16~24색에 재질마다 2~3단계 명암이 들어간다 |
+| 재질마다 **밝은 면 + 그림자 2단계**만, 그라데이션·질감 없음 (셀 셰이딩) | 그대로 픽셀 명암 단계가 된다 |
+| 서로 붙은 부위는 **밝기가 확 다르게** (어두운 옷 위에 어두운 갑옷 X) | 작아져도 부위가 갈라져 보인다 |
+| 어두운 색은 한 군데(머리카락 또는 바지)만 | 어두운 덩어리끼리 뭉치지 않게 |
+| 끈·주머니·버클·무늬·장식 빼기, 벨트는 굵게 하나 | 1~2칸짜리 잔무늬는 얼룩이 된다 |
+| 머리를 키의 1/4 정도로 (살짝 2.5~3등신) | 얼굴(눈 2칸)이 들어갈 자리 |
+| 굵고 고른 검은 외곽선 | 외곽선이 1칸 선으로 깔끔하게 남는다 |
+| 망토·옷자락은 단순한 큰 모양 (찢어진 끝 X) | 실루엣이 또렷해진다 |
+
+### 지시문 — 여러 방향을 한 장에 (모양이 덜 어긋난다)
+
+지금 `front.png` 를 참고 그림으로 넣어 같은 캐릭터로 맞춘다.
+
+```
+Character turnaround sheet of the same character as the reference image, redesigned for a 50-pixel-tall game sprite.
+Five views side by side, same size and same height, evenly spaced, each on its own:
+front view, three-quarter front-left view (45 degrees), left side view (facing left), three-quarter back-left view (45 degrees), back view.
+Pose: standing straight, feet slightly apart, arms hanging about 25 degrees away from the body, open empty hands, no weapon.
+Proportions: slightly chibi, head about one quarter of the body height.
+Design: very simple, large flat color areas only. Limited palette of six materials:
+bright red cape, light silver armor plates, white tunic, medium brown leather belt and boots, warm skin, dark brown hair.
+Each material uses only one base color and one shadow color, flat cel shading, no gradients, no texture, no small details,
+no straps, no pouches, no buckles, no patterns. One thick belt. Simple smooth cape shape without torn edges.
+Strong value contrast between neighboring parts. Thick clean black outline of even width.
+Plain light gray background (#D3D3D4), no shadow, no ground, no text, no labels.
+```
+
+### 지시문 — 한 방향씩 (시트가 잘 안 나올 때)
+
+```
+Same character as the reference image, redesigned for a 50-pixel-tall game sprite, <VIEW>, single character, full body,
+standing straight, feet slightly apart, arms hanging about 25 degrees away from the body, empty hands, no weapon,
+slightly chibi proportions (head about one quarter of the height),
+large flat color areas, six materials only (bright red cape, light silver armor, white tunic, brown leather, skin, dark brown hair),
+one base color and one shadow color per material, flat cel shading, no gradients, no texture, no small details,
+thick clean black outline, plain light gray background (#D3D3D4), no shadow, no text
+```
+
+`<VIEW>` 자리에 차례로:
+- `front view facing the viewer`
+- `three-quarter front view, turned 45 degrees to the left`
+- `left side view, facing left`
+- `three-quarter back view, turned 45 degrees to the left, showing the back`
+- `back view, showing the back`
+
+### 칼 (같은 그림체로 세 각도)
+
+```
+The same simple longsword drawn three times side by side, designed for a pixel art game sprite:
+(1) side view lying vertical with the tip pointing down, no perspective,
+(2) tilted 45 degrees toward the viewer with perspective, blade short and tip looking close,
+(3) tip pointing straight at the viewer: only a small diamond tip in front and the cross-guard behind it as a horizontal bar, grip hidden.
+Two colors for the blade (light, shadow), one color for the guard and grip, flat colors, thick black outline,
+no texture, no shadow, plain light gray background (#D3D3D4), no text.
+```
+
+### 받은 뒤
+
+- 그림은 크게(키 800픽셀 이상) 뽑는다. 줄이는 건 도구가 한다.
+- 시트 그대로 `input/` 에 넣으면 잘라서 `front.png`, `front_left.png`, `left.png`, `back_left.png`, `back.png` 로 둔다.
+  오른쪽 세 방향은 뒤집어 만든다.
+- 관절 찾기 → 망토 뼈·색 가져오기 → 조각 → 8방향 그리기를 다시 한다. 동작(공통 동작)은 그대로 쓴다.
