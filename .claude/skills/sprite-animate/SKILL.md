@@ -157,6 +157,9 @@ animate.bat parts characters/<이름>          # 이미 있으면 건너뜀. 다
 
 ## 4. 만들기
 
+기본은 픽셀 조각 방식(조각을 한 번 픽셀로 만들어 RotSprite 로 돌림 — 깜빡임이 적다). 예전 방식과 비교하려면 `--filter`.
+
+
 ```
 animate.bat render characters/<이름> -o output/<이름>
 animate.bat render characters/<이름> -o output/<이름> --only left/attack front/walk   # 일부만 빠르게

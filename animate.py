@@ -1129,9 +1129,10 @@ def _wrap(text, font, width):
     return "\n".join(lines + [cur])
 
 
-def write_layer_sheets(out, name, model, part_frames, hi_frames, palette, cfg):
+def write_layer_sheets(out, name, model, part_frames, hi_frames, palette, cfg, pixel=False):
     """(층, depth) 마다 시트를 하나씩 쓴다. 파일 이름 앞 두 자리는 depth 순위(작을수록 뒤).
-    겹칠 경계에 검은 줄이 생기지 않도록 층 시트에는 외곽선을 두르지 않는다."""
+    겹칠 경계에 검은 줄이 생기지 않도록 층 시트에는 외곽선을 두르지 않는다.
+    pixel=True 면 part_frames 가 이미 최종 칸 그림(픽셀 조각)이라 줄이지 않고 그대로 쓴다."""
     canvas = cfg["canvas"]
     layer_dir = out / "layers" / name
     shutil.rmtree(layer_dir, ignore_errors=True)  # 열려 있는 파일은 남을 수 있다 (save_image 가 처리)
@@ -1149,7 +1150,7 @@ def write_layer_sheets(out, name, model, part_frames, hi_frames, palette, cfg):
     filled = [per_cell(np.asarray(h)[..., 3] >= thr) >= 0.5 for h in hi_frames]
     default_keys = [key for key in part_frames if key[0] in model.default_layers]
     alpha = {key: {i: np.asarray(img)[..., 3] for i, img in frames.items()} for key, frames in part_frames.items()}
-    any_cell = {key: {i: per_cell(a > 0) for i, a in frames.items()} for key, frames in alpha.items()}
+    any_cell = {} if pixel else {key: {i: per_cell(a > 0) for i, a in frames.items()} for key, frames in alpha.items()}
 
     def keep_mask(key, i):
         own = any_cell[key][i]
@@ -1162,8 +1163,11 @@ def write_layer_sheets(out, name, model, part_frames, hi_frames, palette, cfg):
     stacked = [Image.new("RGBA", (canvas, canvas)) for _ in range(n)]
     for (layer_i, depth) in sorted(part_frames, key=lambda kd: (rank[kd[1]], model.slots.index(model.layers[kd[0]]["slot"]), kd[0])):
         frames = part_frames[(layer_i, depth)]
-        small = [px.downscale(frames[i], (canvas, canvas), palette, 1, keep_mask((layer_i, depth), i)) if i in frames
-                 else Image.new("RGBA", (canvas, canvas)) for i in range(n)]
+        if pixel:
+            small = [frames.get(i, Image.new("RGBA", (canvas, canvas))) for i in range(n)]
+        else:
+            small = [px.downscale(frames[i], (canvas, canvas), palette, 1, keep_mask((layer_i, depth), i)) if i in frames
+                     else Image.new("RGBA", (canvas, canvas)) for i in range(n)]
         if not any(np.asarray(s)[..., 3].any() for s in small):
             continue
         layer = model.layers[layer_i]
@@ -1212,6 +1216,21 @@ def cmd_render(args):
         saved = list(palette) + ([px.hex_to_rgb(cfg["outline_color"])] if cfg["outline"] else [])
         px.write_hex(out / "palette.hex", saved)
 
+    # 픽셀 조각 방식 (pixel_parts.py): 조각을 한 번만 픽셀로 만들어 RotSprite 로 돌린다. --filter 면 예전처럼 큰 그림을 줄인다
+    pixel_mode = cfg.get("pixel_parts", True) and not args.filter
+    pixel_rigs = {}
+    if pixel_mode:
+        import parts
+        import pixel_parts
+        for view, m in models.items():
+            if isinstance(m, parts.PartModel):
+                pixel_rigs[id(m)] = pixel_parts.PixelParts(m, palette, cfg)
+                # 관절 틈 검사의 기준도 픽셀 그림으로 (매끈한 큰 그림과 비교하면 계단 때문에 틈이 많아 보인다)
+                base = {bone: dict(ch) for bone, ch in m.base_pose.items()}
+                ref = pixel_rigs[id(m)].render(base).resize((m.size, m.size), Image.NEAREST)
+                m._ref_cover = joint_cover(m, base, ref)
+        print(f"  픽셀 조각 방식 ({len(pixel_rigs)}방향)")
+
     meta_path = out / "animations.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
     layers_path = out / "layers.json"
@@ -1233,7 +1252,17 @@ def cmd_render(args):
                 fm, pose = frame_setup(anim, models, view, t)
                 poses.append(pose)
                 frame_models.append(fm)
-                if args.layers:
+                prig = pixel_rigs.get(id(fm))
+                if prig:
+                    # 픽셀 조각: 최종 칸 그림을 바로 얻는다. 검사·확인 그림용 큰 그림은 그것을 키운 것
+                    if args.layers:
+                        small, pieces = prig.render(pose, parts=True)
+                        for key, img in pieces.items():
+                            part_frames.setdefault(key, {})[i] = img
+                    else:
+                        small = prig.render(pose)
+                    hi = small.resize((fm.size, fm.size), Image.NEAREST)
+                elif args.layers:
                     hi, pieces = fm.render(pose, parts=True)
                     for key, img in pieces.items():
                         part_frames.setdefault(key, {})[i] = img
@@ -1252,8 +1281,15 @@ def cmd_render(args):
                         trail = np.zeros((fm.size, fm.size, 4), np.uint8)
                         trail[mask] = TRAIL_COLOR
                         hi = Image.alpha_composite(Image.fromarray(trail), hi)
+                        if prig:  # 칸의 절반 이상을 지나간 칸에, 비어 있으면 궤적 색(팔레트에서 가장 가까운 색)
+                            cells = mask.reshape(canvas, fm.k, canvas, fm.k).mean(axis=(1, 3)) >= 0.5
+                            a = np.asarray(small).copy()
+                            spot = cells & (a[..., 3] == 0)
+                            a[spot] = [*palette[px.nearest_index(np.array([TRAIL_COLOR[:3]]), palette)[0]], 255]
+                            small = Image.fromarray(a)
                         trailed.add(i)
-                small = px.downscale(hi, (canvas, canvas), palette, cfg["alpha_threshold"])
+                if not prig:
+                    small = px.downscale(hi, (canvas, canvas), palette, cfg["alpha_threshold"])
                 if cfg["outline"]:
                     small = px.add_outline(small, px.hex_to_rgb(cfg["outline_color"]))
                 hi_frames.append(hi)
@@ -1278,7 +1314,8 @@ def cmd_render(args):
                           "frame_size": canvas, "pivot": [0.5, cfg["foot_margin"] / canvas]}
             stacked = None
             if args.layers:
-                parts, stacked = write_layer_sheets(out, name, model, part_frames, hi_frames, palette, cfg)
+                parts, stacked = write_layer_sheets(out, name, model, part_frames, hi_frames, palette, cfg,
+                                                    pixel=bool(pixel_rigs.get(id(model))))
                 layers_meta[name] = {**meta[name], "parts": parts}
             save_image(draw_anim_check(hi_frames, pix_frames, stacked), out / "check" / f"{name}.png")
             print(f"  {name}.png ({n}프레임)" + (f", 층 시트 {len(parts)}장" if args.layers else ""))
@@ -1362,6 +1399,8 @@ def main():
     p_render.add_argument("--only", nargs="*", help="이 동작만 만든다 (예: front/walk side/attack)")
     p_render.add_argument("--mesh", action="store_true",
                           help="조각(parts/)이 있어도 예전 그물 방식으로 그린다")
+    p_render.add_argument("--filter", action="store_true",
+                          help="픽셀 조각 방식 대신 예전처럼 프레임마다 큰 그림을 그려 줄인다 (비교용)")
     p_render.add_argument("--layers", action="store_true",
                           help="층(몸·덮개·물건)과 앞뒤 순서별로 나눈 시트와 layers.json 도 만든다")
     p_render.set_defaults(func=cmd_render)

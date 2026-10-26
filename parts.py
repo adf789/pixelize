@@ -422,7 +422,7 @@ class PartModel:
             if p["layer"] in self.default_layers:
                 combined = warped + combined * (1 - warped[..., 3:4])
             if parts:
-                key = (p["layer"], p["depth"] + z.get(p["bone"], 0))
+                key = (p["layer"], p["depth"])  # 층 시트는 조각의 기본 앞뒤 순서로 묶는다 (z 는 프레임마다 소수로 바뀌므로)
                 acc = groups.get(key)
                 groups[key] = warped if acc is None else warped + acc * (1 - warped[..., 3:4])
         if not parts:
