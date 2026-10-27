@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>픽셀 원본 지시문 생성기</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Silkscreen&display=swap">
+<style>
+/* 레이아웃: 왼쪽 입력 칸, 오른쪽에 완성된 지시문이 따라 붙는 두 칸. 좁으면 한 칸 */
+:root {
+  --bg: #e9e7ec;
+  --panel: #f7f6f9;
+  --ink: #1b1325;          /* 툴의 외곽선 색 */
+  --muted: #625a6e;
+  --line: #cfcad6;
+  --accent: #b8322a;       /* 전사의 붉은 망토 */
+  --accent-ink: #ffffff;
+  --code-bg: #24202b;
+  --code-fg: #ece8f2;
+  --ok: #2e7d4f;
+  --font-body: "IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --font-pixel: "Silkscreen", var(--font-mono);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #17141c; --panel: #211d28; --ink: #ece8f2; --muted: #a59eb2; --line: #3a3443;
+    --accent: #e0574c; --accent-ink: #1b1325; --code-bg: #0f0d13; --code-fg: #ece8f2; --ok: #6cc28f;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #17141c; --panel: #211d28; --ink: #ece8f2; --muted: #a59eb2; --line: #3a3443;
+  --accent: #e0574c; --accent-ink: #1b1325; --code-bg: #0f0d13; --code-fg: #ece8f2; --ok: #6cc28f;
+  color-scheme: dark;
+}
+body {
+  margin: 0;
+  background: var(--bg); color: var(--ink); font-family: var(--font-body); font-size: 15px; line-height: 1.6;
+  padding-block: 24px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 20px; }
+header { display: grid; gap: 6px; }
+h1 { font-family: var(--font-pixel); font-weight: 400; font-size: 26px; letter-spacing: .02em; margin: 0; text-wrap: balance; }
+h1 span { font-family: var(--font-body); font-weight: 600; font-size: 22px; }
+.lead { color: var(--muted); margin: 0; max-width: 70ch; }
+.kinds { display: flex; flex-wrap: wrap; gap: 8px; }
+.kinds button {
+  font: inherit; font-weight: 500; padding: 8px 14px; border-radius: 6px; cursor: pointer;
+  border: 1.5px solid var(--line); background: var(--panel); color: var(--ink);
+}
+.kinds button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.kinds button:focus-visible, .copy:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+.cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 20px; align-items: start; }
+@media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+form { display: grid; gap: 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 18px; min-width: 0; }
+fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: 12px; min-width: 0; }
+.field small code { overflow-wrap: anywhere; }
+form, fieldset, .field { grid-template-columns: minmax(0, 1fr); }  /* 긴 선택지 글이 칸을 넓히지 않게 */
+fieldset[hidden] { display: none; }
+legend { font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.field { display: grid; gap: 4px; }
+.field label { font-weight: 500; font-size: 14px; }
+.field small { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.slot { font-family: var(--font-mono); font-size: 12px; color: var(--accent); margin-left: 4px; }
+input[type=text], select, textarea {
+  font: inherit; font-size: 14px; width: 100%; box-sizing: border-box; padding: 7px 10px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--ink);
+}
+.check { display: flex; gap: 8px; align-items: flex-start; font-size: 14px; }
+.check input { margin-top: 5px; }
+.out { display: grid; gap: 14px; position: sticky; top: calc(env(safe-area-inset-top, 0px) + 12px); min-width: 0; }
+@media (max-width: 860px) { .out { position: static; } }
+.prompt { background: var(--code-bg); color: var(--code-fg); border-radius: 8px; overflow: hidden; }
+.prompt-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #ffffff1a; }
+.prompt-head b { font-family: var(--font-pixel); font-weight: 400; font-size: 13px; letter-spacing: .04em; }
+.copy { font: inherit; font-size: 13px; font-weight: 600; padding: 6px 14px; border-radius: 6px; border: 0; cursor: pointer; background: var(--accent); color: var(--accent-ink); }
+#prompt { margin: 0; padding: 14px; font-family: var(--font-mono); font-size: 12.8px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; max-height: 60vh; overflow: auto; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; display: grid; gap: 8px; min-width: 0; }
+.card h2 { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin: 0; font-weight: 600; }
+.card ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 14px; }
+code, .cmd { font-family: var(--font-mono); font-size: 12.5px; }
+.cmd { display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; overflow-x: auto; white-space: pre; }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+.warn { color: var(--accent); font-weight: 500; }
+.ruler { display: flex; gap: 3px; align-items: flex-end; height: 46px; }
+.ruler i { display: block; width: 10px; background: var(--ink); border-radius: 1px; }
+.ruler i.head { background: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { .copy { transition: transform .08s; } .copy:active { transform: scale(.97); } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <h1>PIXEL PROMPT <span>원본 지시문 생성기</span></h1>
+    <p class="lead">ChatGPT 그림 생성에 넣을 영어 지시문을 만듭니다. 고른 값이 <code>&lt; &gt;</code> 칸에 들어가고, 나머지 줄은 <code>pixelize</code> 툴(몸틀·장비 층·128칸 줄이기)이 잘 읽도록 정해 둔 조건이라 그대로 둡니다.</p>
+  </header>
+
+  <div class="kinds" role="group" aria-label="지시문 종류">
+    <button type="button" data-kind="base" aria-pressed="true">기본 몸 (몸틀)</button>
+    <button type="button" data-kind="head" aria-pressed="false">캐릭터 머리 편집</button>
+    <button type="button" data-kind="item" aria-pressed="false">장비 편집</button>
+    <button type="button" data-kind="weapon" aria-pressed="false">무기 세 각도</button>
+  </div>
+
+  <div class="cols">
+    <form id="form" autocomplete="off">
+      <fieldset>
+        <legend>공통</legend>
+        <div class="field">
+          <label for="template">몸틀 이름 <span class="slot">폴더</span></label>
+          <input type="text" id="template" value="male">
+          <small>저장할 자리를 정합니다: <code>input\몸틀\</code>, <code>templates\몸틀\</code></small>
+        </div>
+        <div class="field">
+          <label for="props">비율 <span class="slot">&lt;head count&gt;</span></label>
+          <select id="props">
+            <option value="2.5" selected>2.5등신 — warrior_simple 같은 꼬마 비율 (권장)</option>
+            <option value="3.5">3.5등신 — 조금 덜 짧은 꼬마</option>
+            <option value="4.5">4.5등신 — warrior 같은 비율</option>
+            <option value="6">6등신 — 얼굴이 작아짐 (128칸에서 눈 2칸)</option>
+          </select>
+          <div class="ruler" id="ruler" aria-hidden="true"></div>
+          <small id="propNote"></small>
+        </div>
+        <div class="field">
+          <label for="style">그림체 <span class="slot">&lt;art style&gt;</span></label>
+          <select id="style">
+            <option value="clean anime-style RPG game art">깔끔한 애니메이션풍 RPG</option>
+            <option value="cute cartoon-style RPG game art">귀여운 만화풍 RPG</option>
+            <option value="dark fantasy RPG game art with muted colors">차분한 색의 다크 판타지</option>
+            <option value="bright western cartoon game art">밝은 서양 만화풍</option>
+            <option value="custom">직접 적기…</option>
+          </select>
+          <input type="text" id="styleCustom" placeholder="예: soft watercolor-free cel-shaded storybook game art" hidden>
+        </div>
+        <div class="field">
+          <label for="target">줄일 크기</label>
+          <select id="target">
+            <option value="128" selected>128칸 (키 100칸) — config_128.json</option>
+            <option value="64">64칸 (키 48칸) — config.json</option>
+          </select>
+        </div>
+        <label class="check"><input type="checkbox" id="useRef" checked>
+          <span>참고 그림을 함께 넣음 — 그림체·선 굵기·비율을 맞추라는 줄을 더합니다. 기존 캐릭터 앞 그림(<code>characters\warrior_simple\front.png</code>)을 같이 올리세요.</span></label>
+      </fieldset>
+
+      <fieldset data-for="base">
+        <legend>기본 몸</legend>
+        <div class="field">
+          <label for="body">성별·체형 <span class="slot">&lt;body type&gt;</span></label>
+          <select id="body">
+            <option value="young male adventurer, slim build, natural shoulders">남자, 마른 체형</option>
+            <option value="young female adventurer, slim build, narrow shoulders">여자, 마른 체형</option>
+            <option value="young male adventurer, sturdy build, broad shoulders">남자, 다부진 체형</option>
+            <option value="young female adventurer, athletic build">여자, 운동선수 체형</option>
+          </select>
+          <small>남·여 몸틀은 비율과 그림체를 똑같이 두고 이 칸만 바꿔 뽑으면 키·발 줄이 맞습니다.</small>
+        </div>
+        <div class="field">
+          <label for="outfit">기본 옷 <span class="slot">&lt;base outfit&gt;</span></label>
+          <select id="outfit">
+            <option value="tight dark gray long-sleeve bodysuit and tight leggings, simple dark shoes">짙은 회색 쫄쫄이 + 레깅스 (권장)</option>
+            <option value="tight white short-sleeve shirt and tight dark shorts, bare arms and legs, simple brown shoes">흰 반팔 + 짙은 반바지</option>
+            <option value="tight light gray full bodysuit, simple gray shoes">밝은 회색 전신 쫄쫄이</option>
+          </select>
+          <small>장비를 입혔다 벗겨도 빈틈이 없도록 몸에 붙는 옷만 씁니다. 장비와 밝기가 달라야 경계가 보입니다.</small>
+        </div>
+        <div class="field">
+          <label for="hairBase">머리 <span class="slot">&lt;hair&gt;</span></label>
+          <input type="text" id="hairBase" value="short messy brown hair">
+          <small>목·어깨를 덮지 않는 짧은 머리. 캐릭터마다 머리는 나중에 "캐릭터 머리 편집"으로 바꿉니다.</small>
+        </div>
+        <div class="field">
+          <label for="skin">피부</label>
+          <select id="skin">
+            <option value="warm light skin">밝은 피부</option>
+            <option value="warm tan skin">그을린 피부</option>
+            <option value="deep brown skin">짙은 피부</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="eyesBase">눈 <span class="slot">&lt;eyes&gt;</span></label>
+          <input type="text" id="eyesBase" value="blue eyes">
+        </div>
+      </fieldset>
+
+      <fieldset data-for="head" hidden>
+        <legend>캐릭터 머리</legend>
+        <p class="note">ChatGPT 에 몸틀의 <code>base.png</code> 를 올리고 이 지시문으로 <b>편집</b>합니다. 몸은 그대로 두고 머리·얼굴만 바뀌어야 툴이 머리 층으로 떼어 냅니다.</p>
+        <div class="field">
+          <label for="charName">캐릭터 이름 <span class="slot">파일 이름</span></label>
+          <input type="text" id="charName" value="rin">
+        </div>
+        <div class="field">
+          <label for="hairStyle">머리 모양</label>
+          <input type="text" id="hairStyle" value="short spiky hair with side-swept bangs">
+          <small>목·어깨를 덮는 긴 머리는 아직 머리 층으로 다루지 못합니다.</small>
+        </div>
+        <div class="field">
+          <label for="hairColor">머리 색</label>
+          <input type="text" id="hairColor" value="bright silver-blue">
+        </div>
+        <div class="field">
+          <label for="eyeColor">눈 색</label>
+          <input type="text" id="eyeColor" value="amber">
+        </div>
+        <div class="field">
+          <label for="faceExtra">얼굴 특징 (선택)</label>
+          <input type="text" id="faceExtra" value="confident gentle expression">
+        </div>
+      </fieldset>
+
+      <fieldset data-for="item" hidden>
+        <legend>장비</legend>
+        <p class="note">ChatGPT 에 몸틀의 <code>base.png</code> 를 올리고 <b>장비 하나만</b> 입히도록 편집합니다. 매번 <code>base.png</code> 에서 편집하세요 (입힌 그림 위에 또 입히지 않기).</p>
+        <div class="field">
+          <label for="slot">자리 <span class="slot">slot</span></label>
+          <select id="slot">
+            <option value="armor">갑옷 (몸통·어깨)</option>
+            <option value="helmet">투구 (머리 위)</option>
+            <option value="boots">신발·장화 (발·종아리)</option>
+            <option value="gloves">장갑 (손·손목)</option>
+            <option value="pants">바지·다리 갑옷 (골반·다리)</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="itemName">장비 이름 <span class="slot">파일 이름</span></label>
+          <input type="text" id="itemName" value="iron">
+          <small>파일 이름은 <code>자리_이름</code> 이 됩니다 (예: <code>armor_iron</code>). 툴은 앞부분으로 같은 자리끼리 묶어 바꿔 끼웁니다.</small>
+        </div>
+        <div class="field">
+          <label for="itemDesc">장비 설명</label>
+          <input type="text" id="itemDesc" value="simple iron plate armor with rounded shoulder pads">
+        </div>
+        <div class="field">
+          <label for="itemColors">색 (재질 2~3가지)</label>
+          <input type="text" id="itemColors" value="light silver metal, dark brown leather">
+          <small>몸의 기본 옷과 밝기가 확 달라야 128칸에서 갈라져 보입니다.</small>
+        </div>
+      </fieldset>
+
+      <fieldset data-for="weapon" hidden>
+        <legend>무기</legend>
+        <p class="note">무기는 몸틀과 상관없이 손에 붙입니다. 세 각도 그림은 칼이 보는 사람 쪽으로 기울 때 바꿔 끼웁니다.</p>
+        <div class="field">
+          <label for="weaponType">종류</label>
+          <select id="weaponType">
+            <option value="longsword">긴 칼</option>
+            <option value="short sword">짧은 칼</option>
+            <option value="battle axe">도끼</option>
+            <option value="spear">창</option>
+            <option value="mace">철퇴</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="weaponName">무기 이름 <span class="slot">파일 이름</span></label>
+          <input type="text" id="weaponName" value="sword_iron">
+        </div>
+        <div class="field">
+          <label for="weaponDesc">설명</label>
+          <input type="text" id="weaponDesc" value="plain straight blade, simple cross-guard, round pommel">
+        </div>
+        <div class="field">
+          <label for="weaponColors">색</label>
+          <input type="text" id="weaponColors" value="light silver blade, brown leather grip">
+        </div>
+      </fieldset>
+    </form>
+
+    <div class="out">
+      <section class="prompt" aria-label="완성된 지시문">
+        <div class="prompt-head"><b id="promptTitle">BASE BODY</b><button type="button" class="copy" id="copy">지시문 복사</button></div>
+        <pre id="prompt" tabindex="0"></pre>
+      </section>
+      <section class="card">
+        <h2>저장할 자리</h2>
+        <code class="cmd" id="savePath"></code>
+        <p class="note" id="saveNote"></p>
+      </section>
+      <section class="card">
+        <h2>뽑은 뒤 확인할 것</h2>
+        <ul id="checks"></ul>
+      </section>
+      <section class="card">
+        <h2>다음 명령</h2>
+        <code class="cmd" id="nextCmd"></code>
+      </section>
+    </div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const FIELDS = ["template", "props", "style", "styleCustom", "target", "useRef", "body", "outfit", "hairBase", "skin", "eyesBase",
+    "charName", "hairStyle", "hairColor", "eyeColor", "faceExtra", "slot", "itemName", "itemDesc", "itemColors",
+    "weaponType", "weaponName", "weaponDesc", "weaponColors"];
+  const STORE = "pixel-prompt-v1";
+  let kind = "base";
+
+  // 비율: 머리가 키에서 차지하는 비율과 지시문 표현
+  const PROPS = {
+    "2.5": { head: 0.40, text: "super-deformed chibi proportions, about 2.5 heads tall: very large head (about 40% of the total height), short torso, short limbs, small hands and feet",
+             note: "머리 약 40칸 (키 100칸 중). 눈이 4~5칸이라 얼굴이 잘 읽힙니다." },
+    "3.5": { head: 0.30, text: "chibi proportions, about 3.5 heads tall: large head (about 30% of the total height), short limbs",
+             note: "머리 약 30칸. 눈 3~4칸." },
+    "4.5": { head: 0.22, text: "slightly stylized proportions, about 4.5 heads tall: head about 22% of the total height",
+             note: "머리 약 22칸. 눈 2~3칸으로 얼굴이 작아지기 시작합니다." },
+    "6":   { head: 0.17, text: "stylized proportions, about 6 heads tall: head about 17% of the total height",
+             note: "머리 약 17칸. 128칸에서 눈이 2칸이라 얼굴이 뭉개집니다." },
+  };
+  const TARGET = { "128": "a 100-pixel-tall pixel art game sprite", "64": "a 50-pixel-tall pixel art game sprite" };
+  const VIEWS = "Five views in a single row, left to right: 1) front view, 2) three-quarter front view turned 45 degrees toward the left, " +
+    "3) left side view facing left, 4) three-quarter back view turned 45 degrees toward the left, 5) back view.";
+  const LAYOUT = "All five views exactly the same height and scale, feet standing on the same horizontal baseline, tops of the heads aligned, " +
+    "evenly spaced with clear empty gaps between them, nothing overlapping.";
+  const RENDER = "Rendering: clean thick dark outline of even width, flat cel shading with one base color and one or two shadow colors per material, " +
+    "large simple shapes, no gradients, no texture, no fine patterns, no small details. Strong value contrast between neighboring parts.";
+  const BG = "Plain flat light gray background (#c8c8c8), no shadow on the ground, no text, no labels. Landscape 3:2 image.";
+  const KEEP = "Edit this image. Keep everything exactly the same: the same five views, the same poses, positions and sizes, " +
+    "the same background, and the same art style (thick dark outline, flat cel shading, no texture).";
+  const SLOTS = {
+    armor: "worn on the torso and shoulders only; do not cover the hands, the legs or the head",
+    helmet: "worn on the top of the head only; the face stays fully visible",
+    boots: "worn on the feet and lower legs only, below the knees",
+    gloves: "worn on the hands and wrists only, the fingers in exactly the same pose",
+    pants: "worn on the hips and legs only, not covering the feet",
+  };
+
+  const v = (id) => { const el = $(id); return el.type === "checkbox" ? el.checked : el.value.trim(); };
+  const style = () => v("style") === "custom" ? (v("styleCustom") || "clean anime-style RPG game art") : v("style");
+  const target = () => TARGET[v("target")];
+  const eyesRule = () => v("target") === "128" ? "large clear eyes with a bright iris and a white highlight, simple small mouth"
+    : "simple large eyes, simple small mouth";
+  const ref = (what) => v("useRef") ? `Match the art style, line weight, shading and proportions of the attached reference image${what}.` : "";
+  const tpl = () => v("template") || "male";
+  const lines = (...xs) => xs.filter(Boolean).join("\n");
+
+  const BUILD = {
+    base: () => ({
+      title: "BASE BODY",
+      text: lines(
+        `Character turnaround sheet of ONE base body character for a 2D game, designed to be downscaled to ${target()}.`,
+        VIEWS,
+        `Art style: ${style()}. ${ref(", but draw a new plain base body without its clothes or equipment")}`.trim(),
+        `Proportions: ${PROPS[v("props")].text}. Body: ${v("body")}.`,
+        LAYOUT,
+        "Pose: relaxed standing pose, arms hanging about 25 degrees away from the body with a visible gap between arms and torso, " +
+          "open relaxed hands, legs slightly apart with a small gap between them.",
+        `Outfit: plain base body only — ${v("outfit")}. No armor, no weapons, no accessories, no belt, no cape, no scarf.`,
+        `Hair: ${v("hairBase")}, short enough that it does NOT cover the neck or shoulders. Skin: ${v("skin")}. Face: ${eyesRule()}, ${v("eyesBase")}.`,
+        RENDER, BG),
+      save: `input\\${tpl()}\\base.png`,
+      saveNote: "새 몸틀이면 새 폴더에 넣으세요. 이미 쓰는 몸틀의 base.png 를 덮어쓰면 관절·조각·장비·머리를 모두 다시 만들어야 합니다.",
+      checks: [
+        "다섯 방향이 떨어져 한 줄로 서 있다 (앞, 앞 대각선, 왼쪽 옆, 뒤 대각선, 뒤)",
+        "다섯 방향의 키와 발 줄이 같다",
+        "팔과 몸통 사이, 두 다리 사이가 떨어져 있다",
+        "머리가 목·어깨를 덮지 않는다",
+        "장비·무기·망토·벨트가 없다",
+        "배경이 한 가지 밝은 회색이다",
+      ],
+      next: `equip.bat input\\${tpl()} -o output\\${tpl()} -t templates\\${tpl()} -c config_128.json\n` +
+        `animate.bat rig templates\\${tpl()} -c config_128.json`,
+    }),
+    head: () => ({
+      title: "HEAD EDIT",
+      text: lines(
+        KEEP,
+        "Keep the body, the outfit, the hands and every color below the neck unchanged.",
+        `Only change the hair and the face in all five views, consistently from every angle: ${v("hairStyle")} in ${v("hairColor")}; ` +
+          `${v("eyeColor")} eyes; ${v("faceExtra") ? v("faceExtra") + "; " : ""}${eyesRule()}.`,
+        "Keep the head the same size and in the same place. The hair must not cover the neck, the shoulders or the body. " +
+          "Do not add hats, accessories or clothing.",
+        RENDER.replace("Rendering: ", "Same rendering: ")),
+      save: `input\\${tpl()}\\heads\\${v("charName") || "name"}.png`,
+      saveNote: "편집 대상: 몸틀의 base.png. 몸이 많이 바뀐 편집본은 툴이 건너뜁니다.",
+      checks: [
+        "목 아래(몸·옷·손)가 원본과 똑같다",
+        "다섯 방향 모두 같은 머리 모양·색이다",
+        "머리 크기와 자리가 원본과 같다",
+        "머리카락이 목·어깨를 덮지 않는다",
+      ],
+      next: `equip.bat input\\${tpl()} -o output\\${tpl()} -t templates\\${tpl()} -c config_128.json\n` +
+        `animate.bat render templates\\${tpl()} -o output\\${v("charName") || "name"} -c config_128.json --wear ${v("charName") || "name"}`,
+    }),
+    item: () => {
+      const file = `${v("slot")}_${v("itemName") || "name"}`;
+      return {
+        title: "EQUIPMENT EDIT",
+        text: lines(
+          KEEP,
+          "Keep the face, the hair, the hands and the body exactly the same.",
+          `Only add the following equipment to all five views, consistently from every angle: ${v("itemDesc")}, ${SLOTS[v("slot")]}.`,
+          `Colors: ${v("itemColors")}. The equipment covers its body area completely and is slightly larger than the body underneath, ` +
+            "so none of the base outfit shows at its edges.",
+          "Simple large shapes, at most three materials, no straps, no buckles, no small decorations, thick dark outline, " +
+            "flat cel shading with one base color and one or two shadow colors. Do not add any other equipment or any weapon."),
+        save: `input\\${tpl()}\\${file}.png`,
+        saveNote: `편집 대상: 몸틀의 base.png (장비 하나만). 같은 자리(${v("slot")})의 장비끼리 게임에서 바꿔 끼웁니다.`,
+        checks: [
+          "장비 하나만 입었고, 얼굴·머리·손은 그대로다",
+          "다섯 방향 모두 같은 장비다",
+          "장비 가장자리로 기본 옷이 삐져나오지 않는다",
+          "장비 색이 기본 옷과 밝기가 확 다르다",
+        ],
+        next: `equip.bat input\\${tpl()} -o output\\${tpl()} -t templates\\${tpl()} -c config_128.json\n` +
+          `animate.bat render templates\\${tpl()} -o output\\${tpl()} -c config_128.json --unity`,
+      };
+    },
+    weapon: () => {
+      const w = v("weaponType");
+      return {
+        title: "WEAPON SHEET",
+        text: lines(
+          `The same simple ${w} drawn three times side by side, designed for ${target()}, art style: ${style()}.`,
+          ref(""),
+          "(1) side view lying vertical with the tip pointing down, no perspective,",
+          "(2) tilted 45 degrees toward the viewer with perspective, looking shorter and the tip looking close,",
+          "(3) tip pointing straight at the viewer: only the small tip in front and the guard or head behind it, the grip hidden.",
+          `${v("weaponDesc")}. Colors: ${v("weaponColors")}. Same size scale in all three drawings.`,
+          RENDER,
+          BG),
+        save: `input\\${tpl()}\\${v("weaponName") || "weapon"}.png`,
+        saveNote: "세 각도로 잘라 손잡이·끝 좌표를 재는 일은 Claude 에게 맡기면 됩니다 (rig 의 attachments variants).",
+        checks: [
+          "세 그림이 같은 무기, 같은 축척이다",
+          "1번은 끝이 아래를 향해 곧게 서 있다",
+          "3번은 끝이 보는 사람을 향해 짧게 보인다",
+          "배경이 한 가지 밝은 회색이다",
+        ],
+        next: `Claude 에게: "input\\${tpl()}\\${v("weaponName") || "weapon"}.png 을 세 각도로 잘라 templates\\${tpl()} 의 칼로 붙여 줘"`,
+      };
+    },
+  };
+
+  function drawRuler() {
+    const head = PROPS[v("props")].head, total = 46;
+    const headPx = Math.round(total * head);
+    $("ruler").innerHTML = `<i class="head" style="height:${headPx}px"></i><i style="height:${total - headPx}px"></i>`;
+    $("ruler").title = `머리 ${Math.round(head * 100)}%`;
+    $("propNote").textContent = PROPS[v("props")].note;
+  }
+
+  function update() {
+    $("styleCustom").hidden = v("style") !== "custom";
+    document.querySelectorAll("fieldset[data-for]").forEach((f) => { f.hidden = f.dataset.for !== kind; });
+    document.querySelectorAll(".kinds button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.kind === kind)));
+    const r = BUILD[kind]();
+    $("promptTitle").textContent = r.title;
+    $("prompt").textContent = r.text;
+    $("savePath").textContent = r.save;
+    $("saveNote").textContent = r.saveNote;
+    $("checks").innerHTML = r.checks.map((c) => `<li>${c}</li>`).join("");
+    $("nextCmd").textContent = r.next;
+    drawRuler();
+    try {
+      const data = { kind };
+      FIELDS.forEach((id) => { const el = $(id); data[id] = el.type === "checkbox" ? el.checked : el.value; });
+      localStorage.setItem(STORE, JSON.stringify(data));
+    } catch (e) { /* 저장이 막힌 창에서도 그대로 동작 */ }
+  }
+
+  try {
+    const saved = JSON.parse(localStorage.getItem(STORE) || "null");
+    if (saved) {
+      FIELDS.forEach((id) => { if (id in saved) { const el = $(id); if (el.type === "checkbox") el.checked = saved[id]; else el.value = saved[id]; } });
+      if (BUILD[saved.kind]) kind = saved.kind;
+    }
+  } catch (e) { /* 처음 연 창 */ }
+
+  $("form").addEventListener("input", update);
+  $("form").addEventListener("change", update);
+  $("form").addEventListener("submit", (e) => e.preventDefault());
+  document.querySelectorAll(".kinds button").forEach((b) => b.addEventListener("click", () => { kind = b.dataset.kind; update(); }));
+
+  $("copy").addEventListener("click", async () => {
+    const text = $("prompt").textContent;
+    const btn = $("copy");
+    try {
+      await navigator.clipboard.writeText(text);
+      btn.textContent = "복사됨";
+    } catch (e) {
+      const range = document.createRange();
+      range.selectNodeContents($("prompt"));
+      const sel = getSelection(); sel.removeAllRanges(); sel.addRange(range);
+      btn.textContent = "선택됨 — Ctrl+C";
+    }
+    setTimeout(() => { btn.textContent = "지시문 복사"; }, 1600);
+  });
+
+  update();
+})();
+</script>
+</body>
+</html>

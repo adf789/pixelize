@@ -950,6 +950,7 @@ function mousePos(e) {
 // 되돌려 저장한다. 그래서 부모가 어떻게 돌아 있든 뼈가 마우스를 그대로 따라온다.
 //  - 화면 기준: 화면을 뚫고 나오는 축으로 돌린다 (끄는 대로 화면 안에서 돈다). Alt+위아래는 화면 가로축으로 (보는 쪽으로 기울이기).
 //  - 로컬 기준: 고른 뼈 자신의 축 중 화면을 가장 많이 향한 축으로 돌린다. Alt+위아래는 그 뼈의 다른 축으로.
+//  - 뼈 축 / 뼈 수직: 뼈가 지금 향한 방향 / 그와 수직이면서 화면에 놓인 축 (startCommonRotate).
 // 저장과 프레임 사이 잇기는 그대로 각도 숫자라서, 한 바퀴 돌기·180도 넘는 휘두르기도 열쇠 두 개로 된다.
 
 const I3 = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
@@ -1017,23 +1018,36 @@ function channelsFromRotation(bone, L, prev) {
   }), prev);
 }
 
+// 뼈 수직 모드는 보통 끌기도 위아래로 끈다 (뼈 끝이 화면 밖으로 오가는 회전이라 원을 그리며 끌기가 맞지 않다)
+const verticalDrag = (kind) => kind === "tilt" || $("rotAxis").value === "perp";
+
 function startCommonRotate(kind, bone, view, t) {
+  // 돌리는 축 = 모드 × 끌기 종류 ("rot" = 보통 끌기, "tilt" = Alt+위아래 끌기)
+  //  화면: 끌기 = 화면을 뚫고 나오는 축, Alt = 화면 가로축
+  //  로컬: 끌기 = 뼈 자신의 swing 축(X)·spread 축(Z) 중 화면을 더 많이 향한 축, Alt = 나머지 축
+  //  뼈 축: 끌기 = 뼈가 지금 향한 방향 (제자리 비틀기), Alt = 뼈 수직
+  //  뼈 수직: 위아래 끌기 = 뼈와 수직이면서 화면에 놓인 축 (뼈를 보는 쪽·안쪽으로 젖히기), Alt = 뼈 축
   const va = VIEW_AXES[view];
   const depthAxis = va[2], screenX = va[0];
   const { parent, g, own } = boneGlobals(st.anim, st.cur.sc, t, bone);
   const prev = { swing: own.swing || 0, spread: own.spread || 0, twist: own.twist || 0 };
-  const local = $("rotAxis").value === "local";
-  let inPlane = depthAxis, tilt = screenX;
-  if (local) {   // 뼈 자신의 swing 축(X)·spread 축(Z) 중 화면을 더 많이 향한 축으로 화면 안 돌리기, 나머지로 기울이기
+  const mode = $("rotAxis").value;
+  const end = mulVec(g, restDir(bone));
+  const facing = (a) => dot3(a, depthAxis) >= 0 ? a : a.map((v) => -v);   // 보는 사람 쪽을 향하게 (끄는 방향과 도는 방향을 맞춘다)
+  let axes = [depthAxis, screenX];   // [보통 끌기 축, Alt 축]
+  if (mode === "local") {
     const ax = column(g, 0), az = column(g, 2);
     const [a, b] = Math.abs(dot3(ax, depthAxis)) >= Math.abs(dot3(az, depthAxis)) ? [ax, az] : [az, ax];
-    inPlane = dot3(a, depthAxis) >= 0 ? a : a.map((v) => -v);
-    tilt = b;
+    axes = [facing(a), b];
+  } else if (mode === "bone" || mode === "perp") {
+    const perp = cross3(end, depthAxis);   // 뼈가 보는 사람을 똑바로 향하면 화면 가로축으로
+    const across = Math.hypot(...perp) > 1e-3 ? perp : screenX;
+    axes = mode === "bone" ? [facing(end), across] : [across, facing(end)];
   }
-  // 기울이기: 위로 끌면(+) 뼈 끝이 보는 사람 쪽으로 오게 축 방향을 고른다
-  const end = mulVec(g, restDir(bone));
-  if (dot3(cross3(tilt, end), depthAxis) < 0) tilt = tilt.map((v) => -v);
-  return { parent, g0: g, prev, axis: kind === "tilt" ? tilt : inPlane };
+  let axis = kind === "tilt" ? axes[1] : axes[0];
+  // 위아래로 끄는 회전: 위로 끌면(+) 뼈 끝이 보는 사람 쪽으로 오게 축 방향을 고른다
+  if (verticalDrag(kind) && dot3(cross3(axis, end), depthAxis) < 0) axis = axis.map((v) => -v);
+  return { parent, g0: g, prev, axis };
 }
 
 function applyCommonRotate(q, bone, deg, t) {
@@ -1059,6 +1073,11 @@ stage.addEventListener("mousedown", (e) => {
   }
   const b = pickBone(px, py);
   if (b) { st.bone = b; }
+  if (st.common && !e.altKey && verticalDrag("rot")) {   // 뼈 수직 모드: 위아래로 끌어 젖히기
+    st.drag = { kind: "tilt", py, q: startCommonRotate("rot", st.bone, st.cur.sc.view, t) };
+    render(); renderTimeline();
+    return;
+  }
   if (e.altKey) {   // Alt+위아래 끌기: 고른 뼈를 앞뒤로 기울이기 (위로 끌면 보는 쪽 +)
     e.preventDefault();
     st.drag = st.common ? { kind: "tilt", py, q: startCommonRotate("tilt", st.bone, st.cur.sc.view, t) }

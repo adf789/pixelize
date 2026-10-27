@@ -89,8 +89,8 @@
       <label><input type="checkbox" id="showBones" checked> 뼈</label>
       <label><input type="checkbox" id="showOnion"> 앞뒤 프레임 겹쳐 보기</label>
       <label><input type="checkbox" id="showGround" checked> 바닥선</label>
-      <label id="rotAxisWrap" title="끌어서 돌릴 때의 축. 화면: 화면을 뚫고 나오는 축 (끄는 대로 화면 안에서 돈다). 로컬: 고른 뼈 자신의 축">돌리는 축
-        <select id="rotAxis"><option value="view">화면</option><option value="local">로컬</option></select></label>
+      <label id="rotAxisWrap" title="끌어서 돌릴 때의 축. 화면: 화면을 뚫고 나오는 축 (끄는 대로 화면 안에서 돈다). 로컬: 고른 뼈 자신의 축. 뼈 축: 뼈가 지금 향한 방향 (제자리 비틀기, Alt = 뼈 수직). 뼈 수직: 뼈와 수직이면서 화면에 놓인 축 (위아래로 끌어 보는 쪽·안쪽으로 젖히기, Alt = 뼈 축)">돌리는 축
+        <select id="rotAxis"><option value="view">화면</option><option value="local">로컬</option><option value="bone">뼈 축</option><option value="perp">뼈 수직</option></select></label>
     </div>
     <div id="banner"></div>
     <div id="views4" style="display:none" title="네 방향 같은 프레임 (누르면 그 방향으로)"></div>
@@ -114,7 +114,8 @@
     </div>
     <p class="muted" id="commonHelp" style="display:none">네 방향 공통 동작: 한 번 움직이면 앞·뒤·왼쪽·오른쪽이 모두 따라갑니다.
       끌면 Unity 회전 도구처럼 축을 중심으로 돌린 결과를 계산해 swing·spread·twist 세 값으로 저장합니다
-      (왼쪽 위 "돌리는 축": 화면 = 끄는 대로 화면 안에서, 로컬 = 그 뼈 자신의 축으로). 부모가 어떻게 돌아 있어도 마우스를 따라옵니다.
+      (왼쪽 위 "돌리는 축": 화면 = 끄는 대로 화면 안에서, 로컬 = 그 뼈 자신의 축으로, 뼈 축 = 뼈가 향한 방향으로 제자리 비틀기,
+      뼈 수직 = 위아래로 끌어 뼈를 보는 쪽·안쪽으로 젖히기). 부모가 어떻게 돌아 있어도 마우스를 따라옵니다.
       <kbd>Alt</kbd>+위아래 끌기는 보는 쪽으로 기울이기(위로 끌면 보는 쪽으로). twist = 제 축으로 비틀기.
       궤적 프레임은 방향마다 따로 저장됩니다. 칸 이름에 마우스를 올리면 설명이 나옵니다.</p>
     <p class="muted" id="chanHelp">값은 기본 자세 위에 더해집니다 (len 은 곱함). 회전은 화면에서 시계 방향이 +.
