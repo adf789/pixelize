@@ -5,6 +5,7 @@ models/
 # 만들어지는 것
 output/
 characters/*/check/
+templates/*/check/
 __pycache__/
 
 # 원본 보관용 (characters/ 에 복사해 쓴다)

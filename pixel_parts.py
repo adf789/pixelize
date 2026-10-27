@@ -60,13 +60,15 @@ class PixelParts:
         ncol = len(self.palette)
 
         # 1) 조각마다 쉼 자리에 그려 칸별로 덮은 비율과 가장 많은 색을 잰다
-        covs, modes = [], []
+        covs, modes, layer_solid = [], [], {}
         for p in model.pieces:
             warped = cv2.warpAffine(p["tex"], p["rest"][:2], (size, size), flags=cv2.INTER_LINEAR,
                                     borderMode=cv2.BORDER_CONSTANT, borderValue=0)
             alpha = warped[..., 3]
             solid = alpha >= thr
             covs.append(solid.reshape(n, k, n, k).mean(axis=(1, 3)))
+            if (p.get("show") or [-1])[0] < 0:  # 각도별로 바꿔 끼우는 그림은 빼고
+                layer_solid[p["layer"]] = layer_solid.get(p["layer"], False) | solid
             idx = np.zeros((size, size), np.int64)
             if solid.any():
                 rgb = warped[..., :3][solid] / alpha[solid][:, None] * 255  # 알파를 곱한 색 → 원래 색
@@ -76,19 +78,29 @@ class PixelParts:
             modes.append(counts.argmax(axis=1).reshape(n, n))
         covs = np.array(covs)
 
-        # 합친 그림이 칠하는 칸인데 어느 조각도 절반을 못 덮은 칸은, 가장 많이 덮은 (합친 그림에 들어가는) 조각이 맡는다
-        in_sheet = np.array([p["layer"] in model.default_layers and p.get("show", [-1])[0] < 0 for p in model.pieces])
-        union = np.asarray(model.render({}))[..., 3] >= cfg["alpha_threshold"]
-        union = union.reshape(n, k, n, k).mean(axis=(1, 3)) >= 0.5
-        sheet_covs = np.where(in_sheet[:, None, None], covs, -1)
-        owner = sheet_covs.argmax(axis=0)
-        orphan = union & ~(np.where(in_sheet[:, None, None], covs, 0) >= 0.5).any(axis=0)
+        # 층의 조각을 합치면 절반 넘게 덮는데 어느 조각도 절반을 못 덮은 칸은, 그 층에서 가장 많이 덮은 조각이 맡는다.
+        # 층마다 따로 정해서, 게임에서 층을 골라 쌓아도 조각 사이에 빈칸이 생기지 않는다
+        take = covs >= 0.5
+        own = np.array([p["layer"] for p in model.pieces])
+        base = np.array([(p.get("show") or [-1])[0] < 0 for p in model.pieces])
+        for layer, solid in layer_solid.items():
+            sel = (own == layer) & base
+            union = solid.reshape(n, k, n, k).mean(axis=(1, 3)) >= 0.5
+            owner = np.where(sel[:, None, None], covs, -1).argmax(axis=0)
+            orphan = union & ~(take & sel[:, None, None]).any(axis=0)
+            for i in np.nonzero(sel)[0]:
+                take[i] |= orphan & (owner == i)
+
+        # 장비 둘레 외곽선 색 (팔레트 끝에 더한다. 조각 색은 위에서 원래 팔레트로만 골랐다)
+        self.outline = None
+        if cfg["outline"]:
+            self.outline = len(self.palette)
+            self.palette = np.vstack([self.palette, an.px.hex_to_rgb(cfg["outline_color"])])
 
         self.pieces = []
         for i, p in enumerate(model.pieces):
             small = np.full((n, n), EMPTY, np.uint8)
-            take = (covs[i] >= 0.5) | (orphan & (owner == i))
-            small[take] = modes[i][take]
+            small[take[i]] = modes[i][take[i]]
             self.pieces.append({**{key: p[key] for key in ("bone", "depth", "layer")}, "show": p.get("show"),
                                 "small": small, "big": upscale(small, k),
                                 "cover": COVER_THIN if p["bone"] in model.weapon_bones else COVER})
@@ -116,29 +128,57 @@ class PixelParts:
         return Image.fromarray(out, "RGBA")
 
     def render(self, pose, parts=False):
-        """합친 그림(최종 칸, 외곽선 없음). parts=True 면 (층, depth) 마다 그린 그림도 함께 돌려준다."""
+        """합친 그림(최종 칸, 바깥 외곽선 없음). parts=True 면 (층 번호, 뼈) 묶음마다 그린 그림도
+        뒤에서 앞 순서의 dict 로 함께 돌려준다. 묶음을 이 순서로 쌓으면 합친 그림과 똑같다.
+        장비 층(slot 이 body·head 가 아닌 층)은 둘레 중 몸 위에 놓이는 칸에 1칸 외곽선을 넣는다
+        (장비가 몸에 묻히지 않게. 몸은 모든 캐릭터가 같으므로 미리 넣어 둘 수 있다)."""
         m = self.model
-        k, n, size = self.k, self.n, m.size
+        n, size = self.n, m.size
         mats, chain = an.bone_matrices(m.bones, m.joints, pose, m.unit, with_chain=True)
-        z = an.z_offsets(m.bones, pose)
-        order = sorted((i for i, p in enumerate(self.pieces) if an.pick_variant(p, pose)),
-                       key=lambda i: (self.pieces[i]["depth"] + z.get(self.pieces[i]["bone"], 0), self.pieces[i]["layer"], i))
-        combined = np.full((n, n), EMPTY, np.uint8)
         groups = {}
-        for i in order:
+        for i in m.order(self.pieces, pose):
             p = self.pieces[i]
             bone_m = chain[p["bone"]] if (p["show"] or [-1])[0] >= 0 else mats[p["bone"]]
             warped = cv2.warpAffine(p["big"], bone_m[:2], (size, size), flags=cv2.INTER_NEAREST,
                                     borderMode=cv2.BORDER_CONSTANT, borderValue=EMPTY)
             small = self.reduce(warped, p["cover"])
             hit = small != EMPTY
-            if p["layer"] in m.default_layers:
-                combined[hit] = small[hit]
-            if parts:
-                key = (p["layer"], p["depth"])  # 층 시트는 조각의 기본 앞뒤 순서로 묶는다 (z 는 프레임마다 소수로 바뀌므로)
-                g = groups.setdefault(key, np.full((n, n), EMPTY, np.uint8))
-                g[hit] = small[hit]
+            g = groups.setdefault((p["layer"], p["bone"]), np.full((n, n), EMPTY, np.uint8))
+            g[hit] = small[hit]
+
+        if self.outline is not None:
+            body = np.zeros((n, n), bool)
+            for (li, _), g in groups.items():
+                if m.layers[li]["slot"] == "body":
+                    body |= g != EMPTY
+            for li, layer in enumerate(m.layers):
+                if layer["slot"] in ("body", "head"):
+                    continue
+                keys = [key for key in groups if key[0] == li]
+                mine = np.zeros((n, n), bool)
+                for key in keys:
+                    mine |= groups[key] != EMPTY
+                ring = near4(mine) & ~mine & body
+                for key in keys:  # 외곽선 칸은 닿은 묶음이 맡는다 (그 묶음의 앞뒤 순서로 그려진다)
+                    spot = near4(groups[key] != EMPTY) & ring
+                    groups[key][spot] = self.outline
+                    ring &= ~spot
+
+        combined = np.full((n, n), EMPTY, np.uint8)
+        for (li, _), g in groups.items():
+            if li in m.default_layers:
+                combined[g != EMPTY] = g[g != EMPTY]
         img = self.to_rgba(combined)
         if not parts:
             return img
         return img, {key: self.to_rgba(g) for key, g in groups.items()}
+
+
+def near4(mask):
+    """위아래좌우로 mask 에 닿은 칸 (mask 자신 포함)."""
+    out = mask.copy()
+    out[1:] |= mask[:-1]
+    out[:-1] |= mask[1:]
+    out[:, 1:] |= mask[:, :-1]
+    out[:, :-1] |= mask[:, 1:]
+    return out

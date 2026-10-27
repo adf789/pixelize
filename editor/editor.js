@@ -57,6 +57,20 @@ const mat = {
 };
 
 // animate.bone_matrices 와 같다
+// animate.foreshort_scale 과 같다: 팔다리는 원통이라 turn 으로 좁아지지 않고, 손발과 함께 tilt 로 너무 짧아지지 않는다
+const ROUND_LIMBS = ["upper_arm", "forearm", "thigh", "shin"], FLAT_ENDS = ["hand", "foot"];
+function foreshortScale(name, p) {
+  const kind = /_[lr]$/.test(name) ? name.slice(0, -2) : name;
+  const rad = Math.PI / 180;
+  let along = Math.cos((p.tilt || 0) * rad), across = Math.cos((p.turn || 0) * rad);
+  const floor = (v, m) => Math.sign(v || 1) * Math.max(Math.abs(v), m);
+  if (ROUND_LIMBS.includes(kind) || FLAT_ENDS.includes(kind)) {
+    along = floor(along, 0.35);
+    across = ROUND_LIMBS.includes(kind) ? 1 : floor(across, 0.6);
+  }
+  return [along, across];
+}
+
 function boneMatrices(sc, pose) {
   const J = sc.joints, u = sc.unit;
   const root = pose.root || {};
@@ -75,8 +89,8 @@ function boneMatrices(sc, pose) {
       base = mat.mul(mat.move(d[0] - c[0], d[1] - c[1]), chain[parent]);
     }
     const stretch = [mat.rot(a), mat.diag(p.len === undefined ? 1 : p.len), mat.rot(-a)].reduce(mat.mul);
-    const foreshort = [mat.rot(a), [[Math.cos((p.tilt || 0) * rad), 0, 0], [0, Math.cos((p.turn || 0) * rad), 0], [0, 0, 1]],
-      mat.rot(-a)].reduce(mat.mul);
+    const [along, across] = foreshortScale(name, p);
+    const foreshort = [mat.rot(a), [[along, 0, 0], [0, across, 0], [0, 0, 1]], mat.rot(-a)].reduce(mat.mul);
     const head = [base, mat.move((p.x || 0) * u, (p.y || 0) * u), mat.move(s[0], s[1]), mat.rot(p.rot || 0), stretch].reduce(mat.mul);
     chain[name] = mat.mul(head, mat.move(-s[0], -s[1]));
     mats[name] = [head, foreshort, mat.move(-s[0], -s[1])].reduce(mat.mul);
@@ -1181,9 +1195,26 @@ async function renderPixels() {
   setStatus();
 }
 
+// 다른 캐릭터로 바꾼다: 서버가 그 캐릭터(와 그 설정)로 바꾼 뒤 화면을 처음부터 다시 읽는다.
+// 동작 파일은 모든 캐릭터가 함께 쓰므로, 저장 안 한 변경이 있으면 먼저 묻는다.
+async function selectCharacter(name) {
+  if (st.dirty && !confirm("저장하지 않은 변경이 있습니다. 버리고 캐릭터를 바꿀까요?")) {
+    $("charSel").value = st.info.character;
+    return;
+  }
+  setStatus("캐릭터를 바꾸는 중…");
+  await api(`/api/character?name=${encodeURIComponent(name)}`, { method: "POST" });
+  st.dirty = false;
+  location.reload();
+}
+
 async function init() {
   st.info = await api("/api/info");
-  $("charName").textContent = st.info.character;
+  const cs = $("charSel");
+  cs.innerHTML = st.info.characters.map((c) => `<option value="${c}">${c.split("/").pop()} (${c.split("/")[0]})</option>`).join("");
+  if (!st.info.characters.includes(st.info.character)) cs.insertAdjacentHTML("afterbegin", `<option>${st.info.character}</option>`);
+  cs.value = st.info.character;
+  cs.onchange = () => selectCharacter(cs.value);
   const vs = $("viewSel");
   vs.innerHTML = st.info.views.map((v) => `<option>${v}</option>`).join("");
   for (const v of st.info.views) await loadScene(v);

@@ -1,0 +1,70 @@
+{
+  "image": "front_left.png",
+  "view": "front_left",
+  "joints": {
+    "shoulder_l": [212.2, 270.6],
+    "elbow_l": [246.9, 389.5],
+    "wrist_l": [264.9, 497.9],
+    "hip_l": [168.6, 479.9],
+    "knee_l": [203.2, 684.7],
+    "ankle_l": [236.3, 862.3],
+    "toe_l": [230.3, 916.5],
+    "hand_tip_l": [253.6, 570.2],
+    "shoulder_r": [85.8, 270.6],
+    "elbow_r": [69.2, 388.0],
+    "wrist_r": [37.6, 494.9],
+    "hip_r": [97.8, 484.4],
+    "knee_r": [100.8, 683.1],
+    "ankle_r": [100.8, 860.8],
+    "toe_r": [32.3, 906.0],
+    "hand_tip_r": [45.1, 565.0],
+    "pelvis": [133.2, 482.1],
+    "neck": [149.0, 270.6],
+    "head_center": [127.0, 171.5]
+  },
+  "base_pose": {},
+  "depth": {
+    "torso": 2,
+    "head": 3,
+    "upper_arm_l": 4,
+    "forearm_l": 4,
+    "hand_l": 4,
+    "upper_arm_r": 1.5,
+    "forearm_r": 1.5,
+    "hand_r": 1.5,
+    "thigh_l": 1,
+    "shin_l": 1,
+    "foot_l": 1,
+    "thigh_r": 0.8,
+    "shin_r": 0.8,
+    "foot_r": 0.8
+  },
+  "attachments": [
+    {
+      "name": "sword",
+      "image": "sword.png",
+      "grip": [129, 135],
+      "tip": [129, 844],
+      "bone": "hand_r",
+      "length": 20.0,
+      "angle": 0,
+      "depth": 1.6,
+      "variants": [
+        {
+          "image": "sword_45.png",
+          "grip": [340, 111],
+          "tip": [2, 696],
+          "length": 19.1,
+          "from": 30
+        },
+        {
+          "image": "sword_tip.png",
+          "grip": [161, 78],
+          "tip": [157, 324],
+          "length": 5.5,
+          "from": 62
+        }
+      ]
+    }
+  ]
+}

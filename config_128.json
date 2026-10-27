@@ -11,5 +11,7 @@
   "outline_color": "#1b1325",
   "preview_scale": 8,
   "shade": true,
-  "face": true
+  "face": true,
+  "frame": 192,
+  "frame_foot_margin": 24
 }

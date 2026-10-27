@@ -19,7 +19,6 @@ import json
 import math
 import os
 import re
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -89,6 +88,7 @@ KP = {"nose": 0, "eye_l": 1, "eye_r": 2, "ear_l": 3, "ear_r": 4,
       "shoulder_l": 5, "shoulder_r": 6, "elbow_l": 7, "elbow_r": 8, "wrist_l": 9, "wrist_r": 10,
       "hip_l": 11, "hip_r": 12, "knee_l": 13, "knee_r": 14, "ankle_l": 15, "ankle_r": 16,
       "bigtoe_l": 17, "smalltoe_l": 18, "bigtoe_r": 20, "smalltoe_r": 21}
+FINGER_TIPS = {"l": (99, 103, 107, 111), "r": (120, 124, 128, 132)}  # 검지~새끼 손가락 끝 (손 21점 중)
 
 BONE_COLORS = [(230, 60, 60), (240, 200, 40), (60, 140, 230), (40, 200, 220), (150, 230, 255),
                (60, 200, 90), (150, 230, 120), (210, 255, 190), (200, 80, 220), (240, 140, 240),
@@ -170,17 +170,23 @@ def detect_joints(img, view, threshold):
         toe = (pt("bigtoe_" + toe_i) + pt("smalltoe_" + toe_i)) / 2
         side = {part: (p[part], p[part]) for part in p}
         toes = (toe, toe)
+        hand = max(["l", "r"], key=lambda s: sc[list(FINGER_TIPS[s])].mean())
+        tips = (hand, hand)
     else:
         side = {part: (pt(part + "_l"), pt(part + "_r"))
                 for part in ("shoulder", "elbow", "wrist", "hip", "knee", "ankle")}
         toes = ((pt("bigtoe_l") + pt("smalltoe_l")) / 2, (pt("bigtoe_r") + pt("smalltoe_r")) / 2)
+        tips = ("l", "r")
 
     j = {}
     for i, s in enumerate(("l", "r")):
         for part, pair in side.items():
             j[f"{part}_{s}"] = pair[i]
         j[f"toe_{s}"] = toes[i]
-        j[f"hand_tip_{s}"] = j[f"wrist_{s}"] + 0.4 * (j[f"wrist_{s}"] - j[f"elbow_{s}"])
+        # 손끝: 손가락 끝 점들의 가운데. 손가락 점수가 낮으면 아래팔 길이로 짐작한다 (손이 긴 그림은 짧게 나온다)
+        f = list(FINGER_TIPS[tips[i]])
+        guess = j[f"wrist_{s}"] + 0.4 * (j[f"wrist_{s}"] - j[f"elbow_{s}"])
+        j[f"hand_tip_{s}"] = np.asarray(kp[f], float).mean(0) if sc[f].mean() >= 3 else guess
     j["pelvis"] = (j["hip_l"] + j["hip_r"]) / 2
     j["neck"] = (j["shoulder_l"] + j["shoulder_r"]) / 2
     j["head_center"] = np.mean([pt(n) for n in ("nose", "eye_l", "eye_r", "ear_l", "ear_r")], axis=0)
@@ -500,24 +506,11 @@ class Model:
         prio = self.tri_depth[tri] * 1e8 + self.tri_layer[tri] * 1e6 + tri
         return pix, tri, prio, rgba
 
-    def render(self, pose, parts=False):
-        """slot 마다 첫 번째 층을 합친 그림. parts=True 면 (층 번호, depth) 마다 따로 그린 그림도 함께 돌려준다.
-        따로 그린 그림을 게임에서 depth 순서대로 쌓으면 합친 그림과 같아진다."""
+    def render(self, pose):
+        """slot 마다 첫 번째 층을 합친 그림."""
         pix, tri, prio, rgba = self._candidates(pose)
-        layer = self.tri_layer[tri]
-        m = np.isin(layer, self.default_layers)
-        combined = compose(pix[m], prio[m], rgba[m], self.size)
-        if not parts:
-            return combined
-        depth = self.tri_depth[tri]
-        pieces = {}
-        for key in sorted(set(zip(layer.tolist(), depth.tolist()))):
-            m = (layer == key[0]) & (depth == key[1])
-            pieces[key] = compose(pix[m], prio[m], rgba[m], self.size)
-        return combined, pieces
-
-    def depth_levels(self):
-        return sorted(set(self.tri_depth.tolist()))
+        m = np.isin(self.tri_layer[tri], self.default_layers)
+        return compose(pix[m], prio[m], rgba[m], self.size)
 
 
 def build_mesh(solid, step):
@@ -608,6 +601,24 @@ def _move(x, y):
     return np.array([[1, 0, x], [0, 1, y], [0, 0, 1]], float)
 
 
+ROUND_LIMBS = ("upper_arm", "forearm", "thigh", "shin")
+FLAT_ENDS = ("hand", "foot")
+MIN_ALONG = 0.35   # 둥근 팔다리·손발은 보는 사람 쪽으로 다 기울어도 이 비율 길이는 보인다 (끝에서 본 원통의 굵기)
+MIN_ACROSS = 0.6   # 손·발은 옆으로 세워도 이 비율 두께는 보인다 (128칸에서 손 폭 3칸 → 2칸)
+
+
+def foreshort_scale(name, p):
+    """tilt·turn 으로 줄어드는 비율 (뼈 방향, 뼈와 수직 방향). 몸통·머리처럼 넓적한 조각은 납작한 카드로 본다.
+    팔다리는 원통이라 제 축으로 돌아도(turn) 폭이 그대로다 — 카드로 보면 85도 돌린 아래팔이 1픽셀 선이 되어 사라진다."""
+    kind = name[:-2] if name.endswith(("_l", "_r")) else name
+    along = math.cos(math.radians(p.get("tilt", 0)))
+    across = math.cos(math.radians(p.get("turn", 0)))
+    if kind in ROUND_LIMBS + FLAT_ENDS:
+        along = math.copysign(max(abs(along), MIN_ALONG), along)
+        across = 1.0 if kind in ROUND_LIMBS else math.copysign(max(abs(across), MIN_ACROSS), across)
+    return along, across
+
+
 def bone_matrices(bones, joints, pose, unit, with_chain=False):
     """뼈마다 '쉼 자세 좌표 → 움직인 좌표' 행렬. 회전은 화면에서 시계 방향이 양수(도).
     len 은 뼈 방향으로 늘이고 줄이는 비율, x/y 는 캐릭터 키 48 기준 칸 단위 이동 (unit = 그리기 픽셀 / 그 1칸).
@@ -632,8 +643,7 @@ def bone_matrices(bones, joints, pose, unit, with_chain=False):
         else:
             base = root_m
         stretch = _rot(a) @ np.diag([p.get("len", 1.0), 1, 1]) @ _rot(-a)
-        foreshort = _rot(a) @ np.diag([math.cos(math.radians(p.get("tilt", 0))),
-                                       math.cos(math.radians(p.get("turn", 0))), 1]) @ _rot(-a)
+        foreshort = _rot(a) @ np.diag([*foreshort_scale(name, p), 1]) @ _rot(-a)
         head = _move(p.get("x", 0) * unit, p.get("y", 0) * unit) @ _move(*s) @ _rot(p.get("rot", 0)) @ stretch
         chain[name] = base @ head @ _move(-s[0], -s[1])
         mats[name] = base @ head @ foreshort @ _move(-s[0], -s[1])
@@ -943,6 +953,10 @@ TRACK_POINTS = {"hand_l": "hand_tip_l", "hand_r": "hand_tip_r", "foot_l": "toe_l
                 "head": "head_center"}  # 따라갈 뼈 → 그 뼈 끝 관절
 # 기준값은 지금 동작들의 실제 값을 재서 정했다 (보통 속도 구르기의 발끝이 프레임당 약 22칸, 칼 회전은 최대 약 285도).
 JUMP_LIMIT = 25         # 손끝·발끝·머리가 한 프레임 사이에 이보다 멀리(64칸 기준 픽셀) 가면 순간이동 경고
+# 위 기준을 정한 캐릭터(warrior_simple, 2~3등신)의 팔·다리 길이 (키 48 기준 칸). 팔다리가 더 긴 체형은 같은 각도로
+# 휘둘러도 끝이 더 멀리 가므로, 손·발의 기준을 길이 비율만큼 늘린다
+JUMP_REF = {"arm": 12.5, "leg": 15.8}
+LIMB_CHAINS = {"arm": ("shoulder", "elbow", "wrist", "hand_tip"), "leg": ("hip", "knee", "ankle")}
 SPIN_LIMIT = 100        # 무기가 한 프레임 사이에 이보다 많이(도) 돌면 경고 → 중간 프레임이나 궤적 효과가 필요
 GAP_MIN, GAP_DROP = 0.6, 0.3  # 관절 원이 이 비율보다 덜 칠해지고, 기본 자세보다 이만큼 줄면 틈 경고
 GAP_APART = 1.5         # 부모·자식 뼈가 들고 간 관절 위치가 이보다(64칸 기준 픽셀) 벌어지면 경고
@@ -1012,6 +1026,17 @@ def joint_cover(model, pose, img):
     return out
 
 
+def jump_limit(model, bone):
+    """이 뼈 끝(손끝·발끝·머리)의 순간이동 기준. 손·발은 그 팔·다리가 기준 캐릭터보다 긴 만큼 늘린다."""
+    limb = {"hand": "arm", "foot": "leg"}.get(bone[:-2])
+    if not limb:
+        return JUMP_LIMIT
+    s = bone[-1]
+    pts = [model.joints[f"{j}_{s}"] for j in LIMB_CHAINS[limb]]
+    length = sum(float(np.linalg.norm(b - a)) for a, b in zip(pts, pts[1:])) / model.unit
+    return JUMP_LIMIT * max(1.0, length / JUMP_REF[limb])
+
+
 def frame_warnings(frame_models, poses, frames, loop, trailed=(), screen_spin=False):
     """프레임마다 경고 목록: 칸 밖 잘림, 관절 벌어짐·틈, 순간이동, 무기 큰 회전.
     frame_models: 프레임마다 그린 모델 (view_swap 으로 바뀔 수 있다). 모델이 바뀌는 프레임 사이는 비교하지 않는다.
@@ -1037,7 +1062,7 @@ def frame_warnings(frame_models, poses, frames, loop, trailed=(), screen_spin=Fa
         if prev is not None and frame_models[prev] is model:
             for bone, p in pts[i].items():
                 d = float(np.linalg.norm(p - pts[prev][bone]))
-                if d > JUMP_LIMIT:
+                if d > jump_limit(model, bone):
                     warn.append(f"{bone} 순간이동 ({prev}→{i}번 프레임 {d:.0f}칸)")
             for bone in ([] if i in trailed else model.weapon_bones):
                 spin = weapon_spin(model, pose, poses[prev], bone, screen_spin)
@@ -1129,58 +1154,40 @@ def _wrap(text, font, width):
     return "\n".join(lines + [cur])
 
 
-def write_layer_sheets(out, name, model, part_frames, hi_frames, palette, cfg, pixel=False):
-    """(층, depth) 마다 시트를 하나씩 쓴다. 파일 이름 앞 두 자리는 depth 순위(작을수록 뒤).
-    겹칠 경계에 검은 줄이 생기지 않도록 층 시트에는 외곽선을 두르지 않는다.
-    pixel=True 면 part_frames 가 이미 최종 칸 그림(픽셀 조각)이라 줄이지 않고 그대로 쓴다."""
-    canvas = cfg["canvas"]
-    layer_dir = out / "layers" / name
-    shutil.rmtree(layer_dir, ignore_errors=True)  # 열려 있는 파일은 남을 수 있다 (save_image 가 처리)
-    layer_dir.mkdir(parents=True, exist_ok=True)
-    # view_swap 프레임은 다른 방향 그림의 depth 를 쓰므로 실제로 나온 depth 까지 합친다
-    rank = {d: i for i, d in enumerate(sorted(set(model.depth_levels()) | {d for _, d in part_frames}))}
-    thr, k, n = cfg["alpha_threshold"], model.k, len(hi_frames)
-
-    def per_cell(mask):  # 64칸의 칸마다 그림이 차지한 비율
-        return mask.reshape(canvas, k, canvas, k).mean(axis=(1, 3))
-
-    # 한 칸이 여러 층에 나뉘어 걸치면 어느 층도 절반이 안 돼 구멍이 난다.
-    # 그래서 칠할지는 합친 그림과 똑같은 규칙(그 칸의 절반 이상이 진함)으로 정하고,
-    # 그 칸은 그림이 가장 많이 걸친 층이 맡는다. 가장자리의 옅은 픽셀도 세어야 빈칸이 생기지 않는다.
-    filled = [per_cell(np.asarray(h)[..., 3] >= thr) >= 0.5 for h in hi_frames]
-    default_keys = [key for key in part_frames if key[0] in model.default_layers]
-    alpha = {key: {i: np.asarray(img)[..., 3] for i, img in frames.items()} for key, frames in part_frames.items()}
-    any_cell = {} if pixel else {key: {i: per_cell(a > 0) for i, a in frames.items()} for key, frames in alpha.items()}
-
-    def keep_mask(key, i):
-        own = any_cell[key][i]
-        others = [any_cell[o][i] for o in default_keys if o != key and i in any_cell[o]]
-        best = own >= np.max(others, axis=0) if others else True
-        alone = per_cell(alpha[key][i] >= thr) >= 0.5  # 바꿔 끼우는 변형은 합친 그림에 없으므로 제 모양으로도 칠한다
-        return alone | (filled[i] & best & (own > 0))
-
-    parts = []
-    stacked = [Image.new("RGBA", (canvas, canvas)) for _ in range(n)]
-    for (layer_i, depth) in sorted(part_frames, key=lambda kd: (rank[kd[1]], model.slots.index(model.layers[kd[0]]["slot"]), kd[0])):
-        frames = part_frames[(layer_i, depth)]
-        if pixel:
-            small = [frames.get(i, Image.new("RGBA", (canvas, canvas))) for i in range(n)]
-        else:
-            small = [px.downscale(frames[i], (canvas, canvas), palette, 1, keep_mask((layer_i, depth), i)) if i in frames
-                     else Image.new("RGBA", (canvas, canvas)) for i in range(n)]
-        if not any(np.asarray(s)[..., 3].any() for s in small):
-            continue
-        layer = model.layers[layer_i]
-        sheet = Image.new("RGBA", (canvas * n, canvas))
-        for i, s in enumerate(small):
-            sheet.paste(s, (i * canvas, 0))
-        file = save_image(sheet, layer_dir / f"{rank[depth]:02d}_{layer['name']}.png").name
-        parts.append({"file": f"layers/{name}/{file}", "layer": layer["name"], "slot": layer["slot"], "depth": depth,
-                      "sorting_order": rank[depth] * 100 + model.slots.index(layer["slot"])})
-        if layer_i in model.default_layers:
-            for i, s in enumerate(small):
-                stacked[i].alpha_composite(s)
-    return parts, stacked
+def write_unity_sheets(out, name, frame_groups, defaults, canvas):
+    """층마다 동작 시트 하나: unity/<slot>/<층>/<동작>.png. 줄 = 그 층의 뼈 묶음, 칸 = 프레임.
+    frame_groups[i] = [((층, slot, 뼈), 그림), ...] 프레임 i 에서 뒤→앞 순서.
+    줄마다 프레임별 쌓는 순서(order)를 적는다. 모든 층의 묶음을 한 줄로 세운 순번이라, slot 마다 아무 층이나 골라
+    order 대로 쌓으면 합친 시트와 똑같다 (팔이 몸 뒤로 넘어가는 z 바뀜도 따라간다).
+    돌려주는 값: (층 → {file, slot, rows}), 합친 층(defaults)만 쌓은 프레임 (검사용)."""
+    n = len(frame_groups)
+    rows, slots = {}, {}
+    for i, groups in enumerate(frame_groups):
+        for order, ((layer, slot, bone), img) in enumerate(groups):
+            if np.asarray(img)[..., 3].any():
+                rows.setdefault(layer, {}).setdefault(bone, {})[i] = (order, img)
+                slots[layer] = slot
+    sheets = {}
+    for layer, bones in rows.items():
+        sheet = Image.new("RGBA", (canvas * n, canvas * len(bones)))
+        for r, frames in enumerate(bones.values()):
+            for i, (_, img) in frames.items():
+                sheet.paste(img, (i * canvas, r * canvas))
+        rel = f"{slots[layer]}/{layer}/{name}.png"
+        (out / "unity" / rel).parent.mkdir(parents=True, exist_ok=True)
+        save_image(sheet, out / "unity" / rel)
+        sheets[layer] = {"file": rel, "slot": slots[layer],
+                         "rows": [{"bone": bone, "order": [frames[i][0] if i in frames else 0 for i in range(n)]}
+                                  for bone, frames in bones.items()]}
+    stacked = []
+    for i in range(n):
+        cells = sorted((o, img) for layer in defaults if layer in rows
+                       for frames in rows[layer].values() if i in frames for o, img in [frames[i]])
+        frame = Image.new("RGBA", (canvas, canvas))
+        for _, img in cells:
+            frame.alpha_composite(img)
+        stacked.append(frame)
+    return sheets, stacked
 
 
 # ---------------------------------------------------------------- render
@@ -1201,7 +1208,7 @@ def cmd_render(args):
         if not args.mesh and (args.character / "parts" / view / "parts.json").exists():
             import parts  # 조각이 있으면 조각 방식 (parts.py)
             print(f"  {view}: 조각 방식")
-            models[view] = parts.PartModel(args.character, rig, cfg)
+            models[view] = parts.PartModel(args.character, rig, cfg, wear=args.wear or ())
         else:
             print(f"  {view}: 그물 방식 (메시와 무게 준비 중...)")
             models[view] = Model(args.character, rig, cfg)
@@ -1230,11 +1237,17 @@ def cmd_render(args):
                 ref = pixel_rigs[id(m)].render(base).resize((m.size, m.size), Image.NEAREST)
                 m._ref_cover = joint_cover(m, base, ref)
         print(f"  픽셀 조각 방식 ({len(pixel_rigs)}방향)")
+    if args.unity and len(pixel_rigs) < len(models):
+        sys.exit("--unity 는 픽셀 조각 방식에서만 됩니다 (모든 방향에 parts 가 있어야 하고 --filter·--mesh 없이)")
+    names = {layer["name"] for m in models.values() for layer in m.layers}
+    for w in args.wear or ():
+        if w not in names:
+            print(f"  주의 --wear {w}: 그런 층이 없습니다 (있는 층: {', '.join(sorted(names))})")
 
     meta_path = out / "animations.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {}
-    layers_path = out / "layers.json"
-    layers_meta = json.loads(layers_path.read_text(encoding="utf-8")) if layers_path.exists() else {}
+    manifest_path = out / "unity" / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {"motions": {}}
     warnings_path = out / "check" / "warnings.json"
     warnings_all = json.loads(warnings_path.read_text(encoding="utf-8")) if warnings_path.exists() else {}
     canvas = cfg["canvas"]
@@ -1246,7 +1259,7 @@ def cmd_render(args):
             anim = load_anim(path, anims_dir, view)
             n = anim["frames"]
             hi_frames, pix_frames, poses, frame_models, trailed = [], [], [], [], set()
-            part_frames = {}  # (층, depth) → {프레임 번호: 그림}
+            frame_groups = []  # 프레임마다 [((층, slot, 뼈), 그림)] 뒤→앞 순서 (--unity)
             times = frame_times(anim)
             for i, t in enumerate(times):
                 fm, pose = frame_setup(anim, models, view, t)
@@ -1255,17 +1268,13 @@ def cmd_render(args):
                 prig = pixel_rigs.get(id(fm))
                 if prig:
                     # 픽셀 조각: 최종 칸 그림을 바로 얻는다. 검사·확인 그림용 큰 그림은 그것을 키운 것
-                    if args.layers:
-                        small, pieces = prig.render(pose, parts=True)
-                        for key, img in pieces.items():
-                            part_frames.setdefault(key, {})[i] = img
+                    if args.unity:
+                        small, groups = prig.render(pose, parts=True)
+                        frame_groups.append([((fm.layers[li]["name"], fm.layers[li]["slot"], bone), img)
+                                             for (li, bone), img in groups.items()])
                     else:
                         small = prig.render(pose)
                     hi = small.resize((fm.size, fm.size), Image.NEAREST)
-                elif args.layers:
-                    hi, pieces = fm.render(pose, parts=True)
-                    for key, img in pieces.items():
-                        part_frames.setdefault(key, {})[i] = img
                 else:
                     hi = fm.render(pose)
                 # 베는 프레임에는 칼날이 지나간 자리를 몸 뒤에 칠한다 (궤적 효과, 합친 시트에만).
@@ -1312,19 +1321,32 @@ def cmd_render(args):
                        duration=durations, loop=0)
             meta[name] = {"frames": n, "fps": anim["fps"], "frame_ms": durations, "loop": anim["loop"],
                           "frame_size": canvas, "pivot": [0.5, cfg["foot_margin"] / canvas]}
-            stacked = None
-            if args.layers:
-                parts, stacked = write_layer_sheets(out, name, model, part_frames, hi_frames, palette, cfg,
-                                                    pixel=bool(pixel_rigs.get(id(model))))
-                layers_meta[name] = {**meta[name], "parts": parts}
+            stacked, note = None, ""
+            if args.unity:
+                defaults = {model.layers[li]["name"] for li in model.default_layers}
+                sheets, stacked = write_unity_sheets(out, name, frame_groups, defaults, canvas)
+                manifest["motions"][name] = {"view": view, "frames": n, "frame_ms": durations, "loop": anim["loop"],
+                                             "events": anim.get("events", {}), "sheets": sheets}
+                if cfg["outline"]:
+                    stacked = [px.add_outline(s, px.hex_to_rgb(cfg["outline_color"])) for s in stacked]
+                # 층을 쌓은 결과가 합친 시트와 같은지 (칼 궤적은 합친 시트에만 있으므로 그 프레임은 뺀다)
+                diff = [i for i in range(n) if i not in trailed
+                        and not np.array_equal(np.asarray(stacked[i]), np.asarray(pix_frames[i]))]
+                note = f", 층 {len(sheets)}개" + (f" (주의: 합친 시트와 다른 프레임 {diff})" if diff else "")
             save_image(draw_anim_check(hi_frames, pix_frames, stacked), out / "check" / f"{name}.png")
-            print(f"  {name}.png ({n}프레임)" + (f", 층 시트 {len(parts)}장" if args.layers else ""))
+            print(f"  {name}.png ({n}프레임){note}")
     meta_path.write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
     warnings_path.write_text(json.dumps(warnings_all, indent=2, ensure_ascii=False), encoding="utf-8")
     count = sum(len(ws) for frames in warnings_all.values() for ws in frames.values())
     print(f"경고 {count}개 (목록: {warnings_path}, 프레임별 큰 그림: {out / 'check'}/*_frames.png)")
-    if args.layers:
-        layers_path.write_text(json.dumps(layers_meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    if args.unity:
+        manifest.update(frame_size=canvas, pivot=[0.5, cfg["foot_margin"] / canvas],
+                        outline_color=cfg["outline_color"] if cfg["outline"] else None,
+                        layers={**manifest.get("layers", {}),
+                                **{layer["name"]: layer["slot"] for m in models.values() for layer in m.layers}})
+        manifest["motions"] = dict(sorted(manifest["motions"].items()))
+        manifest_path.write_text(json.dumps(manifest, indent=1, ensure_ascii=False), encoding="utf-8")
+        print(f"Unity: {manifest_path}")
 
 
 def cmd_angles(args):
@@ -1401,8 +1423,10 @@ def main():
                           help="조각(parts/)이 있어도 예전 그물 방식으로 그린다")
     p_render.add_argument("--filter", action="store_true",
                           help="픽셀 조각 방식 대신 예전처럼 프레임마다 큰 그림을 그려 줄인다 (비교용)")
-    p_render.add_argument("--layers", action="store_true",
-                          help="층(몸·덮개·물건)과 앞뒤 순서별로 나눈 시트와 layers.json 도 만든다")
+    p_render.add_argument("--unity", action="store_true",
+                          help="층(몸·머리·장비·무기)마다 뼈 묶음별 시트와 unity/manifest.json 도 만든다")
+    p_render.add_argument("--wear", nargs="*",
+                          help="합친 시트에 입힐 머리·장비 층 이름 (예: rin armor_iron). 그 slot 의 기본 대신 들어간다")
     p_render.set_defaults(func=cmd_render)
 
     p_angles = sub.add_parser("angles", help="동작의 프레임마다 팔·무기의 실제 화면 각도와 무기 끝 위치를 출력한다")

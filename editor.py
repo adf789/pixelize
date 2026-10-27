@@ -3,6 +3,7 @@
 사용법:
     python editor.py [캐릭터폴더] [--port 8765] [--open]
     → 브라우저에서 출력된 주소(기본 http://127.0.0.1:8765)를 연다. --open 이면 브라우저를 저절로 연다.
+    화면 위 드롭박스로 characters/·templates/ 의 다른 캐릭터·몸틀로 바꿀 수 있다 (조각까지 만든 것).
     그 포트를 다른 프로그램이 쓰고 있으면 다음 포트(8766, 8767, …)를 쓴다.
 
 편집기(editor/editor.js)는 animate.py 와 똑같은 규칙(뼈 행렬, 열쇠 곡선, view_swap)으로 자세를 계산해 그린다.
@@ -50,6 +51,31 @@ def anim_mtimes():
     return {f"{p.parent.name}/{p.stem}": str(p.stat().st_mtime_ns) for p in ANIMS.glob("*/*.json")}
 
 
+CHAR_ROOTS = ("characters", "templates")
+
+
+def list_characters():
+    """편집기에서 고를 수 있는 캐릭터·몸틀 폴더 (조각까지 만든 것). 'characters/warrior' 처럼 도구 폴더 기준 경로."""
+    return [f"{root}/{d.name}" for root in CHAR_ROOTS if (HERE / root).is_dir()
+            for d in sorted((HERE / root).iterdir()) if any(d.glob("parts/*/parts.json"))]
+
+
+def character_config(char_dir, fallback):
+    """캐릭터 폴더의 character.json 에 적힌 설정 파일 (도구 폴더 기준). 없으면 fallback (-c 로 준 설정).
+    예: templates/male/character.json = {"config": "config_128.json"}"""
+    path = char_dir / "character.json"
+    if path.exists():
+        return (HERE / json.loads(path.read_text(encoding="utf-8"))["config"]).resolve()
+    return fallback
+
+
+def char_key(char_dir):
+    try:
+        return char_dir.relative_to(HERE).as_posix()
+    except ValueError:
+        return str(char_dir)
+
+
 def straight_png(tex):
     """PartModel 텍스처(알파를 곱한 0~1 실수)를 보통 RGBA PNG 바이트로."""
     a = tex[..., 3:4]
@@ -63,11 +89,19 @@ def straight_png(tex):
 class Scenes:
     """방향마다 PartModel 을 한 번 만들어 두고 편집기용 장면 정보로 바꿔 준다."""
 
-    def __init__(self, char_dir, cfg_path):
-        self.char_dir, self.cfg_path = char_dir, cfg_path
+    def __init__(self, char_dir, default_cfg):
+        self.default_cfg = default_cfg
         self.models, self.textures = {}, {}
         self.lock = threading.Lock()
-        self.version = None
+        self.switch(char_dir)
+
+    def switch(self, char_dir):
+        """다른 캐릭터로 바꾼다. 설정은 그 캐릭터의 character.json, 없으면 -c 로 준 설정."""
+        with self.lock:
+            self.char_dir = char_dir
+            self.cfg_path = character_config(char_dir, self.default_cfg)
+            self.models, self.textures = {}, {}
+            self.version = None
 
     def reload(self):
         self.models, self.textures = {}, {}
@@ -161,7 +195,8 @@ def make_handler(scenes):
                         f.suffix, "application/octet-stream")
                     return self.send(f.read_bytes(), ctype)
                 if url.path == "/api/info":
-                    return self.send({"character": scenes.char_dir.name, "views": scenes.views(),
+                    return self.send({"character": char_key(scenes.char_dir), "characters": list_characters(),
+                                      "views": scenes.views(),
                                       "anims": list_anims(), "anim_mtimes": anim_mtimes(),
                                       "data_version": scenes.data_version(), "code_changed": code_changed()})
                 if url.path == "/api/scene":
@@ -227,6 +262,11 @@ def make_handler(scenes):
                 if url.path == "/api/reload":
                     scenes.reload()
                     return self.send({"ok": True})
+                if url.path == "/api/character":
+                    if q["name"] not in list_characters():
+                        return self.fail(f"없는 캐릭터: {q['name']}")
+                    scenes.switch((HERE / q["name"]).resolve())
+                    return self.send({"ok": True, "character": q["name"], "config": char_key(scenes.cfg_path)})
                 return self.fail("없는 주소", 404)
             except (KeyError, ValueError, json.JSONDecodeError) as e:
                 return self.fail(str(e))
@@ -274,7 +314,8 @@ def open_server(handler, port, tries=20):
 def main():
     parser = argparse.ArgumentParser(description="동작 편집기 서버")
     parser.add_argument("character", type=Path, nargs="?", default=HERE / "characters" / "warrior_simple")
-    parser.add_argument("-c", "--config", type=Path, default=HERE / "config.json")
+    parser.add_argument("-c", "--config", type=Path, default=HERE / "config.json",
+                        help="character.json 이 없는 캐릭터에 쓸 설정")
     parser.add_argument("--port", type=int, default=int(os.environ.get("PORT", 8765)))
     parser.add_argument("--open", action="store_true", help="브라우저를 저절로 연다")
     args = parser.parse_args()
