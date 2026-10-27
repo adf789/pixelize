@@ -3,7 +3,7 @@
   "loop": true,
   "interp": "spline",
   "frame_ms": [50, 50, 50, 50, 50, 50, 50, 50],
-  "follow": {"cape": {"of": "torso", "lag": 2, "gain": 1.0}, "cape_l": {"of": "torso", "lag": 2, "gain": 1.0}, "cape_r": {"of": "torso", "lag": 2, "gain": 1.0}},
+  "follow": {"cape": {"of": "torso", "lag": 2, "gain": 1.2}, "cape_l": {"of": "torso", "lag": 2, "gain": 1.2}, "cape_r": {"of": "torso", "lag": 2, "gain": 1.2}},
   "keys": {
     "root": {"ground": [[0.0, 1], [1.0, 1]]},
     "thigh_l": {"swing": [[0.0, 55], [0.25, 15], [0.5, -35], [0.75, 5], [1.0, 55]]},
