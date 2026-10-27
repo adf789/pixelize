@@ -89,6 +89,8 @@
       <label><input type="checkbox" id="showBones" checked> 뼈</label>
       <label><input type="checkbox" id="showOnion"> 앞뒤 프레임 겹쳐 보기</label>
       <label><input type="checkbox" id="showGround" checked> 바닥선</label>
+      <label id="rotAxisWrap" title="끌어서 돌릴 때의 축. 화면: 화면을 뚫고 나오는 축 (끄는 대로 화면 안에서 돈다). 로컬: 고른 뼈 자신의 축">돌리는 축
+        <select id="rotAxis"><option value="view">화면</option><option value="local">로컬</option></select></label>
     </div>
     <div id="banner"></div>
     <div id="views4" style="display:none" title="네 방향 같은 프레임 (누르면 그 방향으로)"></div>
@@ -104,14 +106,16 @@
     <h2>고른 뼈</h2>
     <div class="row"><label>뼈</label><select id="boneSel" style="flex:1"></select></div>
     <div id="chanRows"></div>
+    <div id="dirInfo" style="font-size:12px; margin:6px 0; line-height:1.6"></div>
     <div class="row">
       <button id="keyBtn" title="K">열쇠 넣기</button>
       <button id="delKeyBtn" title="Delete">열쇠 지우기</button>
       <label style="width:auto"><input type="checkbox" id="easeChk"> 여기서 멈춤(ease)</label>
     </div>
     <p class="muted" id="commonHelp" style="display:none">네 방향 공통 동작: 한 번 움직이면 앞·뒤·왼쪽·오른쪽이 모두 따라갑니다.
-      앞·뒤 그림에서 끌면 spread(옆으로 벌리기), 옆 그림에서 끌면 swing(앞뒤로 휘두르기)이 바뀝니다.
-      <kbd>Alt</kbd>+위아래 끌기는 그 반대 채널(보는 쪽으로 +). twist = 제 축으로 비틀기.
+      끌면 Unity 회전 도구처럼 축을 중심으로 돌린 결과를 계산해 swing·spread·twist 세 값으로 저장합니다
+      (왼쪽 위 "돌리는 축": 화면 = 끄는 대로 화면 안에서, 로컬 = 그 뼈 자신의 축으로). 부모가 어떻게 돌아 있어도 마우스를 따라옵니다.
+      <kbd>Alt</kbd>+위아래 끌기는 보는 쪽으로 기울이기(위로 끌면 보는 쪽으로). twist = 제 축으로 비틀기.
       궤적 프레임은 방향마다 따로 저장됩니다. 칸 이름에 마우스를 올리면 설명이 나옵니다.</p>
     <p class="muted" id="chanHelp">값은 기본 자세 위에 더해집니다 (len 은 곱함). 회전은 화면에서 시계 방향이 +.
       tilt = 앞뒤 기울기(뼈 방향으로 짧아짐), turn = 제 축으로 돌리기(폭이 좁아짐), z = 앞뒤 순서. 셋 다 딸린 뼈에 이어집니다.

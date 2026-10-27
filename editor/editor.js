@@ -485,10 +485,101 @@ function render() {
       sctx.fillStyle = sel ? "#4fb3ff" : "rgba(255,255,255,0.5)";
       sctx.beginPath(); sctx.arc(s.a[0] * scale, s.a[1] * scale, sel ? 4 : 2.5, 0, 7); sctx.fill();
     }
+    if (st.common) drawDirectionArrows(f, mats, scale);
   }
   renderPixel(f);
   renderViews4();
   renderPanel();
+}
+
+// ---------------------------------------------------------------- 채널 방향 안내
+// 공통 동작에서 고른 뼈의 swing·spread·twist 를 + 로 올리면 지금 보는 방향에서 어디로 움직이는지:
+// 무대에 화살표(⊙ 보는 쪽으로 / ⊗ 안쪽으로), 오른쪽 판에 글로 보여 준다.
+const DIR_COLORS = { swing: "#ff9f43", spread: "#4fd1c5", twist: "#c084fc" };
+
+function channelEffects(bone) {
+  // + 15도 올렸을 때 뼈 끝(비틀기는 뼈의 앞면)이 움직이는 방향 (화면 x 오른쪽 +, y 아래 +, 보는 쪽 +)
+  const sc = st.cur.sc, va = VIEW_AXES[sc.view];
+  const { parent, own } = boneGlobals(st.anim, sc, t_now(), bone);
+  const rd = restDir(bone);
+  const front = Math.abs(rd[2]) > 0.5 ? [1, 0, 0] : [0, 0, 1];
+  const rotOf = (ch) => bone === "root"
+    ? [rot3.z(ch.spread || 0), rot3.x(-(ch.swing || 0)), rot3.y(ch.twist || 0)].reduce(mat.mul)
+    : mat.mul(parent, localRotation(bone, ch)[0]);
+  const g0 = rotOf(own);
+  const out = {};
+  for (const ch of ["swing", "spread", "twist"]) {
+    const g1 = rotOf({ ...own, [ch]: (own[ch] || 0) + 15 });
+    const probe = ch === "twist" ? front : rd;
+    const a = mulVec(va, mulVec(g0, probe)), b = mulVec(va, mulVec(g1, probe));
+    out[ch] = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  }
+  return out;
+}
+
+function describeMove(v) {
+  const mag = Math.max(Math.abs(v[0]), Math.abs(v[1]), Math.abs(v[2])) || 1;
+  const parts = [];
+  if (Math.abs(v[0]) > 0.35 * mag) parts.push(v[0] > 0 ? "화면 오른쪽" : "화면 왼쪽");
+  if (Math.abs(v[1]) > 0.35 * mag) parts.push(v[1] > 0 ? "아래" : "위");
+  if (Math.abs(v[2]) > 0.35 * mag) parts.push(v[2] > 0 ? "보는 쪽(앞)" : "안쪽(뒤)");
+  return parts.join(" · ") || "거의 안 움직임";
+}
+
+function drawDirectionArrows(f, mats, scale) {
+  let eff;
+  try { eff = channelEffects(st.bone); } catch (e) { return; }
+  let end, mid;
+  if (st.bone === "root") {
+    const J = f.sc.joints, c = [(J.pelvis[0] + J.neck[0]) / 2, (J.pelvis[1] + J.neck[1]) / 2];
+    end = mat.apply(mats.torso, J.neck); mid = mat.apply(mats.torso, c);
+  } else {
+    const seg = segments(f.sc, mats).find((s) => s.name === st.bone);
+    if (!seg) return;
+    end = seg.b; mid = [(seg.a[0] + seg.b[0]) / 2, (seg.a[1] + seg.b[1]) / 2];
+  }
+  const ctx = sctx;
+  ctx.save();
+  ctx.lineWidth = 2.5;
+  ctx.font = "bold 12px sans-serif";
+  for (const [i, ch] of ["swing", "spread", "twist"].entries()) {
+    const v = eff[ch];
+    const at = ch === "twist" ? mid : end;
+    const x = at[0] * scale, y = at[1] * scale;
+    const flat = Math.hypot(v[0], v[1]), mag = Math.hypot(v[0], v[1], v[2]) || 1;
+    ctx.strokeStyle = ctx.fillStyle = DIR_COLORS[ch];
+    if (flat < 0.5 * mag) {   // 거의 보는 쪽/안쪽으로만 움직임: ⊙ / ⊗
+      const ox = x + 16 + i * 4, oy = y - 16 - i * 18;
+      ctx.beginPath(); ctx.arc(ox, oy, 7, 0, 7); ctx.stroke();
+      if (v[2] > 0) { ctx.beginPath(); ctx.arc(ox, oy, 2.5, 0, 7); ctx.fill(); }
+      else { ctx.beginPath(); ctx.moveTo(ox - 4, oy - 4); ctx.lineTo(ox + 4, oy + 4); ctx.moveTo(ox + 4, oy - 4); ctx.lineTo(ox - 4, oy + 4); ctx.stroke(); }
+      ctx.fillText(`${ch}+`, ox + 10, oy + 4);
+      continue;
+    }
+    const len = 22 + 26 * flat / mag;
+    const ux = v[0] / flat, uy = v[1] / flat;
+    const tx = x + ux * len, ty = y + uy * len;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(tx, ty); ctx.stroke();
+    const hx = -uy, hy = ux;   // 화살촉
+    ctx.beginPath(); ctx.moveTo(tx, ty);
+    ctx.lineTo(tx - ux * 8 + hx * 5, ty - uy * 8 + hy * 5); ctx.lineTo(tx - ux * 8 - hx * 5, ty - uy * 8 - hy * 5); ctx.fill();
+    if (v[2] > 0.35 * mag) ctx.fillText("⊙", tx + 4, ty - 4);   // 화면 안에서 움직이면서 보는 쪽으로도 온다
+    else if (v[2] < -0.35 * mag) ctx.fillText("⊗", tx + 4, ty - 4);
+    ctx.fillText(`${ch}+`, tx + ux * 6 + 4, ty + uy * 6 + 10);
+  }
+  ctx.restore();
+}
+
+function renderDirInfo() {
+  const box = $("dirInfo");
+  if (!st.common || !st.cur) { box.style.display = "none"; return; }
+  let eff;
+  try { eff = channelEffects(st.bone); } catch (e) { box.style.display = "none"; return; }
+  box.style.display = "";
+  const what = { swing: "끝이", spread: "끝이", twist: "앞면이" };
+  box.innerHTML = `<b>${st.bone}</b> 을(를) + 로 올리면 (지금 ${st.cur.sc.view} 그림에서)<br>` +
+    ["swing", "spread", "twist"].map((ch) =>
+      `<span style="color:${DIR_COLORS[ch]}">■ ${ch} +</span> ${what[ch]} ${describeMove(eff[ch])}`).join("<br>");
 }
 
 function renderViews4() {    // 공통 동작: 지금 프레임을 네 방향으로 작게 보여 준다 (누르면 그 방향으로 바꿈)
@@ -704,15 +795,18 @@ function renderPanel() {
       r.className = "row";
       const range = uiOf(ch);
       r.title = range[3];
-      r.innerHTML = `<label>${ch}</label><span class="keydot" id="kd_${ch}"></span>
+      const color = st.common && DIR_COLORS[ch] ? ` style="color:${DIR_COLORS[ch]}"` : "";
+      r.innerHTML = `<label${color}>${ch}</label><span class="keydot" id="kd_${ch}"></span>
         <input type="range" id="rg_${ch}" min="${range[0]}" max="${range[1]}" step="${range[2]}">
         <input type="number" id="nb_${ch}" step="${range[2]}">`;
       rows.appendChild(r);
       const apply = (v) => { if (!isNaN(v)) setKey(st.bone, ch, t_now(), v); };
       const rg = r.querySelector(`#rg_${ch}`);
-      rg.addEventListener("pointerdown", beginGesture);
+      // 슬라이더는 끄는 동안만 화면 값을 덮어쓰지 않는다 (끝나면 포커스가 남아 있어도 되돌리기 등으로 바뀐 값을 보여 준다)
+      rg.addEventListener("pointerdown", () => { st.sliding = ch; beginGesture(); });
       rg.addEventListener("input", (e) => apply(parseFloat(e.target.value)));
-      rg.addEventListener("change", endGesture);
+      rg.addEventListener("change", () => { st.sliding = null; endGesture(); });
+      rg.addEventListener("pointerup", () => { st.sliding = null; });
       r.querySelector(`#nb_${ch}`).addEventListener("change", (e) => apply(parseFloat(e.target.value)));
     }
   }
@@ -721,7 +815,7 @@ function renderPanel() {
     const ks = keysOf(st.bone, ch, false);
     $(`kd_${ch}`).classList.toggle("on", !!(ks && ks.some((k) => near(k[0], t))));
     if (document.activeElement !== $(`nb_${ch}`)) $(`nb_${ch}`).value = round(v, 3);
-    if (document.activeElement !== $(`rg_${ch}`)) $(`rg_${ch}`).value = v;
+    if (st.sliding !== ch) $(`rg_${ch}`).value = v;
     $(`rg_${ch}`).disabled = $(`nb_${ch}`).disabled = st.readOnly;
   }
   $("easeChk").checked = keyIsEase(st.bone, t);
@@ -729,6 +823,8 @@ function renderPanel() {
   $("boneSel").value = st.bone;
   const f = st.cur;
   $("chanHelp").style.display = st.common ? "none" : "";
+  renderDirInfo();
+  $("rotAxisWrap").style.display = st.common ? "" : "none";
   $("commonHelp").style.display = st.common ? "" : "none";
   const own = st.common ? Object.entries((((st.raw.views || {})[st.view] || {}).common) || {})
     .flatMap(([b, chans]) => Object.keys(chans).map((c) => `${b}.${c}`)) : [];
@@ -835,15 +931,102 @@ function mousePos(e) {
   return [(e.clientX - r.left) * stage.width / r.width, (e.clientY - r.top) * stage.height / r.height];
 }
 
-// 공통 동작에서 끌기 → 채널과 부호. 화면 안에서 돌리기는 앞·뒤 그림이면 spread, 옆 그림이면 swing.
-// 앞뒤로 기울이기(Alt)는 그 반대 채널이고, 위로 끌면 보는 사람 쪽으로 온다.
-function commonDragChannel(view, bone, depth) {
-  // 대각선은 가까운 앞·뒤 그림처럼 다룬다 (화면 안 돌리기 = spread)
-  const side = view === "left" || view === "right", flip = ["back", "right", "back_left", "back_right"].includes(view) ? -1 : 1;
-  if (bone === "root") return depth ? [side ? "spread" : "swing", flip] : [side ? "swing" : "spread", side ? -flip : flip];
+// ---------------------------------------------------------------- 공통 동작 끌기: 3D 회전으로 계산
+// Unity 의 회전 도구처럼, 끈 만큼 "축을 중심으로 돌린 결과"를 회전 행렬로 계산한 뒤 뼈의 각도 3개(swing·spread·twist)로
+// 되돌려 저장한다. 그래서 부모가 어떻게 돌아 있든 뼈가 마우스를 그대로 따라온다.
+//  - 화면 기준: 화면을 뚫고 나오는 축으로 돌린다 (끄는 대로 화면 안에서 돈다). Alt+위아래는 화면 가로축으로 (보는 쪽으로 기울이기).
+//  - 로컬 기준: 고른 뼈 자신의 축 중 화면을 가장 많이 향한 축으로 돌린다. Alt+위아래는 그 뼈의 다른 축으로.
+// 저장과 프레임 사이 잇기는 그대로 각도 숫자라서, 한 바퀴 돌기·180도 넘는 휘두르기도 열쇠 두 개로 된다.
+
+const I3 = [[1, 0, 0], [0, 1, 0], [0, 0, 1]];
+const dot3 = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+const cross3 = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const column = (m, j) => [m[0][j], m[1][j], m[2][j]];
+const clamp1 = (v) => Math.max(-1, Math.min(1, v));
+const restDir = (bone) => bone === "root" ? [0, -1, 0] : UP_KINDS.includes(kindOf(bone)) ? [0, -1, 0]
+  : kindOf(bone) === "foot" ? [0, 0, 1] : [0, 1, 0];
+
+function axisRotation(axis, deg) {
+  const n = Math.hypot(axis[0], axis[1], axis[2]);
+  return rot3.axis(axis.map((v) => v / n), deg);
+}
+
+function boneGlobals(anim, sc, t, bone) {
+  // 몸 기준 회전: 부모 쪽(따라 움직임 포함)과, 그 뼈 자신의 열쇠 값으로 만든 뼈 회전
+  const vals = sampleCommon(anim, t);
+  applyFollow(anim, sc, t, vals);
+  const own = sampleCommon(anim, t)[bone] || {};
+  const rc = vals.root || {};
+  const gRoot = [rot3.z(rc.spread || 0), rot3.x(-(rc.swing || 0)), rot3.y(rc.twist || 0)].reduce(mat.mul);
+  if (bone === "root") return { parent: I3, g: gRoot, own: sampleCommon(anim, t).root || {} };
+  const parents = {};
+  for (const [n, p] of sc.bones) parents[n] = p;
+  const chain = [];
+  for (let b = parents[bone]; b; b = parents[b]) chain.unshift(b);
+  let g = gRoot;
+  for (const b of chain) g = mat.mul(g, localRotation(b, vals[b] || {})[0]);
+  return { parent: g, g: mat.mul(g, localRotation(bone, own)[0]), own };
+}
+
+function pickNearest(solutions, prev) {
+  // 같은 회전을 나타내는 두 가지 각도 풀이 중, 지금 값과 가까운 쪽 (한 바퀴 넘는 값도 이어지게 맞춘다)
+  let best = null, bestD = Infinity;
+  for (const s of solutions) {
+    const out = {};
+    let d = 0;
+    for (const [ch, v] of Object.entries(s)) {
+      const ref = prev[ch] || 0;
+      out[ch] = ref + wrap180(v - ref);
+      d += Math.abs(out[ch] - ref);
+    }
+    if (d < bestD) { bestD = d; best = out; }
+  }
+  return best;
+}
+
+function channelsFromRotation(bone, L, prev) {
+  // 회전 행렬 → 그 뼈의 각도 3개 (localRotation 의 반대)
+  const D = 180 / Math.PI;
+  if (bone === "root") {   // root = Rz(spread)·Rx(-swing)·Ry(twist)
+    const b = Math.asin(clamp1(L[2][1])) * D, a = Math.atan2(-L[0][1], L[1][1]) * D, c = Math.atan2(-L[2][0], L[2][2]) * D;
+    return pickNearest([[a, b, c], [a + 180, 180 - b, c + 180]].map(([a, b, c]) => ({ spread: a, swing: -b, twist: c })), prev);
+  }
+  // 뼈 = Rx(swing)·Rz(spread)·R비틀기축(twist) — X·Z·Y 순서로 나눈다
   const m = bone.endsWith("_l") ? -1 : 1, up = UP_KINDS.includes(kindOf(bone)) ? -1 : 1;
-  if (depth) return side ? ["spread", -up * m * flip] : ["swing", flip];
-  return side ? ["swing", up * flip] : ["spread", m * flip];
+  const axis = TWIST_AXIS[kindOf(bone)] || [0, 1, 0];
+  const phi = Math.asin(clamp1(-L[0][1])) * D, psi = Math.atan2(L[2][1], L[1][1]) * D, yr = Math.atan2(L[0][2], L[0][0]) * D;
+  return pickNearest([[psi, phi, yr], [psi + 180, 180 - phi, yr + 180]].map(([ps, ph, y]) => {
+    let spreadA = ph, twistA;
+    if (axis[2]) { twistA = m * (prev.twist || 0); spreadA = ph - twistA; }   // 발: 비틀기 축이 spread 축과 같아 비틀기는 그대로
+    else twistA = axis[1] > 0 ? y : -y;
+    return { swing: up * ps, spread: m * spreadA, twist: m * twistA };
+  }), prev);
+}
+
+function startCommonRotate(kind, bone, view, t) {
+  const va = VIEW_AXES[view];
+  const depthAxis = va[2], screenX = va[0];
+  const { parent, g, own } = boneGlobals(st.anim, st.cur.sc, t, bone);
+  const prev = { swing: own.swing || 0, spread: own.spread || 0, twist: own.twist || 0 };
+  const local = $("rotAxis").value === "local";
+  let inPlane = depthAxis, tilt = screenX;
+  if (local) {   // 뼈 자신의 swing 축(X)·spread 축(Z) 중 화면을 더 많이 향한 축으로 화면 안 돌리기, 나머지로 기울이기
+    const ax = column(g, 0), az = column(g, 2);
+    const [a, b] = Math.abs(dot3(ax, depthAxis)) >= Math.abs(dot3(az, depthAxis)) ? [ax, az] : [az, ax];
+    inPlane = dot3(a, depthAxis) >= 0 ? a : a.map((v) => -v);
+    tilt = b;
+  }
+  // 기울이기: 위로 끌면(+) 뼈 끝이 보는 사람 쪽으로 오게 축 방향을 고른다
+  const end = mulVec(g, restDir(bone));
+  if (dot3(cross3(tilt, end), depthAxis) < 0) tilt = tilt.map((v) => -v);
+  return { parent, g0: g, prev, axis: kind === "tilt" ? tilt : inPlane };
+}
+
+function applyCommonRotate(q, bone, deg, t) {
+  const g = mat.mul(axisRotation(q.axis, deg), q.g0);
+  const L = mat.mul(transpose(q.parent), g);
+  const ch = channelsFromRotation(bone, L, q.prev);
+  for (const [name, v] of Object.entries(ch)) setKey(bone, name, t, v);
 }
 
 stage.addEventListener("mousedown", (e) => {
@@ -864,8 +1047,8 @@ stage.addEventListener("mousedown", (e) => {
   if (b) { st.bone = b; }
   if (e.altKey) {   // Alt+위아래 끌기: 고른 뼈를 앞뒤로 기울이기 (위로 끌면 보는 쪽 +)
     e.preventDefault();
-    const [ch, s] = st.common ? commonDragChannel(st.cur.sc.view, st.bone, true) : ["tilt", 1];
-    st.drag = { kind: "tilt", py, ch, s, v0: valueAt(st.bone, ch, t) };
+    st.drag = st.common ? { kind: "tilt", py, q: startCommonRotate("tilt", st.bone, st.cur.sc.view, t) }
+      : { kind: "tilt", py, ch: "tilt", s: 1, v0: valueAt(st.bone, "tilt", t) };
     render(); renderTimeline();
     return;
   }
@@ -878,9 +1061,9 @@ stage.addEventListener("mousedown", (e) => {
     const seg = segments(st.cur.sc, st.cur.mats).find((s) => s.name === st.bone);
     pivot = [seg.a[0] * st.cur.scale, seg.a[1] * st.cur.scale];
   }
-  const [ch, s] = st.common ? commonDragChannel(st.cur.sc.view, st.bone, false) : ["rot", sign];
-  st.drag = { kind: "rot", pivot, last: Math.atan2(py - pivot[1], px - pivot[0]) * 180 / Math.PI,
-              acc: 0, ch, v0: valueAt(st.bone, ch, t), sign: s };
+  st.drag = { kind: "rot", pivot, last: Math.atan2(py - pivot[1], px - pivot[0]) * 180 / Math.PI, acc: 0 };
+  if (st.common) st.drag.q = startCommonRotate("rot", st.bone, st.cur.sc.view, t);
+  else Object.assign(st.drag, { ch: "rot", v0: valueAt(st.bone, "rot", t), sign });
   render(); renderTimeline();
 });
 
@@ -895,8 +1078,8 @@ window.addEventListener("mousemove", (e) => {
     return;
   }
   if (d.kind === "tilt") {
-    const lim = d.ch === "tilt" ? 80 : 360;
-    setKey(st.bone, d.ch, t, Math.max(-lim, Math.min(lim, d.v0 + d.s * (d.py - py) * 0.5)));
+    if (d.q) applyCommonRotate(d.q, st.bone, (d.py - py) * 0.5, t);
+    else setKey(st.bone, "tilt", t, Math.max(-80, Math.min(80, d.v0 + (d.py - py) * 0.5)));
     return;
   }
   const a = Math.atan2(py - d.pivot[1], px - d.pivot[0]) * 180 / Math.PI;
@@ -904,7 +1087,8 @@ window.addEventListener("mousemove", (e) => {
   if (delta > 180) delta -= 360;
   if (delta < -180) delta += 360;
   d.last = a; d.acc += delta;
-  setKey(st.bone, d.ch, t, d.v0 + d.sign * d.acc);
+  if (d.q) applyCommonRotate(d.q, st.bone, d.acc, t);
+  else setKey(st.bone, d.ch, t, d.v0 + d.sign * d.acc);
 });
 window.addEventListener("mouseup", () => { st.drag = null; endGesture(); });
 
