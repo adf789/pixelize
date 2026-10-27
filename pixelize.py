@@ -26,9 +26,12 @@ DEFAULTS = {
     "outline": True,
     "outline_color": "#1b1325",
     "preview_scale": 8,
+    "shade": False,
+    "face": False,
 }
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+sys.path.insert(0, str(Path(__file__).parent))  # 내장 Python은 스크립트 폴더를 자동으로 찾지 않는다 (polish 를 불러오려고)
 
 
 def load_config(path):
@@ -159,20 +162,26 @@ def downscale(img, size, palette, threshold, keep=None):
     return Image.fromarray(out)
 
 
-def place_on_canvas(img, palette, cfg, name):
-    """캐릭터 키를 char_height에 맞추고, 발끝을 바닥 기준선에 붙여 가운데 놓는다."""
+def placement(img, cfg, name):
+    """캐릭터 키를 char_height에 맞춘 크기 (w, h) 와 캔버스에 놓을 자리 (x, y). 발끝을 바닥 기준선에 붙여 가운데."""
     canvas = cfg["canvas"]
     scale = cfg["char_height"] / img.height
     max_w = canvas - 2  # 양옆 외곽선 자리
     if img.width * scale > max_w:
         scale = max_w / img.width
         print(f"  주의 {name}: 너무 넓어서 키를 {round(img.height * scale)}칸으로 줄였습니다", file=sys.stderr)
-
     w = max(1, round(img.width * scale))
     h = max(1, round(img.height * scale))
+    return w, h, (canvas - w) // 2, canvas - cfg["foot_margin"] - h
+
+
+def place_on_canvas(img, palette, cfg, name):
+    """캐릭터 키를 char_height에 맞추고, 발끝을 바닥 기준선에 붙여 가운데 놓는다."""
+    canvas = cfg["canvas"]
+    w, h, x, y = placement(img, cfg, name)
     small = downscale(img, (w, h), palette, cfg["alpha_threshold"])
     out = Image.new("RGBA", (canvas, canvas), (0, 0, 0, 0))
-    out.paste(small, ((canvas - w) // 2, canvas - cfg["foot_margin"] - h))
+    out.paste(small, (x, y))
     return out
 
 
@@ -218,16 +227,51 @@ def main():
         write_hex(args.output / "palette.hex", saved)
         print(f"팔레트 새로 만듦: {args.output / 'palette.hex'} ({len(saved)}색)")
 
+    faces, tones = {}, None
+    if cfg["face"]:
+        import polish
+        print("얼굴 찾기 (자세 인식 모델)")
+        faces = {name: polish.find_face(img) for name, img in crops.items() if polish.view_kind(name) != "back"}
+        # 눈동자 색은 캐릭터 하나에 하나: 모든 방향의 눈 중 가장 선명하게 뽑힌 색
+        colors = [c for name, f in faces.items() for e in f["eyes"]
+                  if (c := polish.iris_color(crops[name], e["pts"])) is not None]
+        if colors:
+            tones = polish.iris_tones(max(colors, key=lambda c: np.hypot(c[1], c[2])))
+
     preview_dir = args.output / "preview"
     preview_dir.mkdir(exist_ok=True)
     canvas, scale = cfg["canvas"], cfg["preview_scale"]
+    outline_rgb = hex_to_rgb(cfg["outline_color"])
+    used = []
     for name, img in crops.items():
-        img = place_on_canvas(img, palette, cfg, name)
+        src = img
+        img = place_on_canvas(src, palette, cfg, name)
         if cfg["outline"]:
-            img = add_outline(img, hex_to_rgb(cfg["outline_color"]))
+            img = add_outline(img, outline_rgb)
+        if cfg["shade"]:
+            import polish
+            fixed = palette if cfg["palette"] else None
+            img = Image.fromarray(polish.shade(img, list(palette) + [outline_rgb], np.array(outline_rgb), fixed))
+        notes = []
+        if name in faces and tones is not None:
+            import polish
+            w, h, ox, oy = placement(src, cfg, name)
+            a = np.asarray(img).copy()
+            notes = polish.draw_face(a, faces[name], lambda p: np.array([ox + p[0] * w / src.width, oy + p[1] * h / src.height]),
+                                     tones, polish.view_kind(name))
+            img = Image.fromarray(a)
         img.save(args.output / f"{name}.png")
         img.resize((canvas * scale, canvas * scale), Image.NEAREST).save(preview_dir / f"{name}_x{scale}.png")
-        print(f"  {name}.png")
+        a = np.asarray(img)
+        used += [tuple(int(v) for v in c) for c in a[a[..., 3] > 0][:, :3]]
+        print(f"  {name}.png" + (f" ({', '.join(notes)})" if notes else ""))
+
+    if (cfg["shade"] or cfg["face"]) and not cfg["palette"]:
+        # 단계 색·눈동자 색이 새로 생겼으므로 팔레트 파일을 실제로 쓴 색으로 다시 쓴다 (원래 순서 + 새 색)
+        old = [tuple(int(v) for v in c) for c in saved]
+        new = sorted(set(used) - set(old), key=lambda c: -sum(c))
+        write_hex(args.output / "palette.hex", [c for c in old if c in set(used)] + new)
+        print(f"팔레트 다시 씀: 쓴 색 {len(set(used))}개")
 
 
 if __name__ == "__main__":
