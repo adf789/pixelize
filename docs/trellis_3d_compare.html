@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>3D 모델 만들기 비교</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --surface-2: #f2f1ed;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --line: #e1e0d9;
+    --base: #c3c2b7;
+    --ring: rgba(11, 11, 11, 0.10);
+    --link: #1c5cab;
+    --good: #0ca30c;
+    --s-f16: #2a78d6;
+    --s-q8: #eb6834;
+    --s-kaggle: #1baf7a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --surface-2: #242422;
+      --ink: #f0efec;
+      --ink-2: #c3c2b7;
+      --line: #2c2c2a;
+      --base: #383835;
+      --ring: rgba(255, 255, 255, 0.10);
+      --link: #6da7ec;
+      --s-f16: #3987e5;
+      --s-q8: #d95926;
+      --s-kaggle: #199e70;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink);
+    font: 16px/1.75 system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", sans-serif;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 48px 16px 72px; }
+  a { color: var(--link); }
+  p { margin: 0 0 12px; }
+  ul { margin: 0 0 12px; padding-left: 1.25em; }
+  li { margin: 4px 0; }
+  code {
+    font-family: "Cascadia Code", Consolas, "D2Coding", monospace;
+    font-size: 0.88em;
+    background: var(--surface-2);
+    border-radius: 4px;
+    padding: 1px 5px;
+  }
+
+  /* 머리말 */
+  .eyebrow { font-size: 13px; color: var(--ink-2); margin: 0 0 8px; }
+  h1 { font-size: clamp(28px, 4vw, 36px); line-height: 1.25; letter-spacing: -0.01em; margin: 0 0 12px; }
+  .lede { font-size: 17px; color: var(--ink-2); max-width: 46em; margin: 0 0 14px; }
+  .meta { display: flex; flex-wrap: wrap; gap: 6px 8px; list-style: none; margin: 0; padding: 0; }
+  .meta li { font-size: 13px; color: var(--ink-2); background: var(--surface-2); border-radius: 999px; padding: 2px 10px; margin: 0; }
+
+  /* 한눈에 보기 */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 32px 0 14px; }
+  .tile { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 16px 16px 14px; }
+  .tile .k { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); margin: 0; }
+  .tile .v { font-size: 28px; font-weight: 700; line-height: 1.2; margin: 8px 0 6px; }
+  .tile .n { font-size: 13.5px; line-height: 1.55; color: var(--ink-2); margin: 0; }
+  .dot { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--c); }
+  .pill { margin-left: auto; font-size: 12px; font-weight: 600; color: var(--ink); border: 1px solid var(--ring); border-radius: 999px; padding: 0 8px; }
+  .pill::before { content: "✓ "; color: var(--good); }
+  .callout { background: var(--surface); border: 1px solid var(--ring); border-left: 4px solid var(--ink); border-radius: 12px; padding: 14px 18px; margin: 0; }
+  .toc { display: flex; flex-wrap: wrap; gap: 6px; margin: 24px 0 0; }
+  .toc a { font-size: 14px; color: var(--ink); text-decoration: none; background: var(--surface); border: 1px solid var(--ring); border-radius: 999px; padding: 4px 12px; }
+  .toc a:hover { background: var(--surface-2); }
+
+  /* 본문 */
+  section { margin-top: 56px; scroll-margin-top: 16px; }
+  h2 { display: flex; align-items: baseline; gap: 10px; font-size: 22px; line-height: 1.35; margin: 0 0 14px; }
+  h2 .no { font-size: 13px; font-weight: 600; color: var(--ink-2); background: var(--surface-2); border-radius: 6px; padding: 1px 8px; }
+  h3 { font-size: 16px; margin: 28px 0 10px; }
+
+  .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; margin: 0 0 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14.5px; overflow-wrap: normal; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  thead th { font-size: 13px; font-weight: 600; color: var(--ink-2); background: var(--surface-2); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: 0; }
+  table:not(.kv) { min-width: 560px; }  /* 좁은 화면에서는 칸을 짓누르지 않고 옆으로 넘긴다 */
+  .kv th { width: 1%; white-space: nowrap; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .who { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+  .sub { font-size: 13px; color: var(--ink-2); }
+
+  /* 시간 막대 */
+  .chart { background: var(--surface); border: 1px solid var(--ring); border-radius: 12px; padding: 18px 18px 8px; margin: 0 0 10px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; list-style: none; margin: 0 0 14px; padding: 0; font-size: 13.5px; color: var(--ink-2); }
+  .legend li { display: flex; align-items: center; gap: 6px; margin: 0; }
+  .legend .sw { width: 12px; height: 12px; border-radius: 3px; background: var(--c); }
+  .group { margin: 0 0 12px; }
+  .group-title { font-size: 13px; font-weight: 600; color: var(--ink-2); margin: 0 0 4px; }
+  .row { display: grid; grid-template-columns: 84px 1fr; align-items: center; gap: 10px; }
+  .row .name { font-size: 13.5px; white-space: nowrap; }
+  .track { display: flex; align-items: center; gap: 8px; min-height: 30px; border-left: 1px solid var(--base); }
+  .bar { flex: none; height: 18px; width: calc(var(--v) / 854 * 64%); background: var(--c); border-radius: 0 4px 4px 0; }
+  .val { font-size: 13px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  details { margin: 0 0 14px; }
+  summary { cursor: pointer; font-size: 14px; color: var(--ink-2); margin: 0 0 10px; }
+
+  figure { margin: 18px 0 24px; }
+  figure a { display: block; }
+  figure img { display: block; width: 100%; height: auto; background: #282c34; border: 1px solid var(--ring); border-radius: 12px; }
+  figure.narrow { max-width: 420px; }
+  figcaption { font-size: 13.5px; color: var(--ink-2); margin-top: 8px; }
+
+  pre { background: var(--surface-2); border: 1px solid var(--ring); border-radius: 12px; padding: 14px 16px; overflow-x: auto; font-size: 13px; line-height: 1.6; margin: 0 0 14px; }
+  pre code { background: none; padding: 0; font-size: inherit; overflow-wrap: normal; }
+  pre .c { color: var(--ink-2); }
+
+  footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--line); font-size: 13px; color: var(--ink-2); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <p class="eyebrow">pixel-pipeline · 1단계 · 그림 → 3D 모델</p>
+  <h1>3D 모델 만들기 비교</h1>
+  <p class="lede">TRELLIS.2 를 C++ 로 옮긴 <a href="https://github.com/pwilkin/trellis.cpp">trellis.cpp</a> v0.8.1 (MIT) 을
+    어디서(이 PC·Kaggle), 어떤 가중치(f16·q8)로 돌릴지 고르려고 같은 그림·같은 시드로 비교한 기록이다.</p>
+  <ul class="meta">
+    <li>2026-10-28 시험</li>
+    <li>warrior 정면 일러스트</li>
+    <li>시드 42 · 1380986812</li>
+    <li>해상도 512</li>
+  </ul>
+</header>
+
+<div class="tiles">
+  <div class="tile">
+    <p class="k"><span class="dot" style="--c: var(--s-kaggle)"></span>Kaggle f16<span class="pill">추천</span></p>
+    <p class="v">4분 32초</p>
+    <p class="n">기다림·주고받기까지 포함. 밝고 얼굴이 잘 보여 품질이 가장 좋다.</p>
+  </div>
+  <div class="tile">
+    <p class="k"><span class="dot" style="--c: var(--s-q8)"></span>이 PC q8</p>
+    <p class="v">6~7분</p>
+    <p class="n">f16 보다 2.0~2.1배 빠르다. 모양은 같고 색이 어둡다.</p>
+  </div>
+  <div class="tile">
+    <p class="k"><span class="dot" style="--c: var(--s-f16)"></span>이 PC f16</p>
+    <p class="v">13~14분</p>
+    <p class="n">시험 때 <code>trellis.py</code> 기본. Kaggle 보다 어둡게 나온다.</p>
+  </div>
+  <div class="tile">
+    <p class="k">모양 차이 f16 ↔ q8</p>
+    <p class="v">92~94%</p>
+    <p class="n">윤곽 겹침. 같은 f16 을 Kaggle 에서 돌릴 때(80~93%)보다 덜 달라진다.</p>
+  </div>
+</div>
+
+<p class="callout"><strong>결론.</strong> 품질은 Kaggle f16 이 가장 낫고 속도도 가장 빠르다.
+  이 PC 에서 빨리 돌리려면 q8 이 f16 의 절반 시간이지만 색이 어둡다.
+  품질은 가중치보다 시드에 따라 더 크게 달라지므로, 시드 몇 개를 돌려 미리보기로 고르는 게 낫다.</p>
+
+<nav class="toc" aria-label="차례">
+  <a href="#conditions">0. 조건</a>
+  <a href="#time">1. 걸린 시간</a>
+  <a href="#shape">2. 모양</a>
+  <a href="#color">3. 색과 얼굴</a>
+  <a href="#verdict">4. 결론</a>
+  <a href="#todo">5. 남은 일</a>
+  <a href="#appendix">부록</a>
+</nav>
+
+<section id="conditions">
+  <h2><span class="no">0</span>조건</h2>
+  <p>일러스트 → 3D 모델 → Mixamo 동작 → Blender 렌더 → 80칸 픽셀 스프라이트로 가는 파이프라인
+    (작업 폴더의 <code>pixel-pipeline/</code>, 이 저장소 밖)의 1단계다. 정면 일러스트 한 장으로 3D 모델(GLB)을 만든다.</p>
+  <div class="table-wrap">
+    <table class="kv">
+      <tbody>
+        <tr><th>그림</th><td>warrior 정면 일러스트 564×785, 배경 있음 (아래 픽셀 비교 그림의 "원래 그림")</td></tr>
+        <tr><th>프로그램</th><td>trellis.cpp v0.8.1. 해상도 512, 텍스처 1024, PNG 텍스처(<code>--webp off</code>).
+          면 수 옵션(<code>--faces</code>)이 아직 없어 약 15만 면으로 줄어든다</td></tr>
+        <tr><th>가중치</th><td>Hugging Face <code>ilintar/trellis2-gguf</code>. f16 은 512용 8개 11.3GB,
+          q8 은 <code>q8/</code> 폴더의 8개 6.8GB (birefnet·ss_dec 는 f16 과 같은 파일)</td></tr>
+        <tr><th>시드</th><td>42, 1380986812. trellis.cpp 는 시드 0 을 "매번 무작위"로 받는다</td></tr>
+        <tr><th>이 PC</th><td>GTX 1660 SUPER 6GB, 텐서 코어 없음. Windows CUDA 13 판</td></tr>
+        <tr><th>Kaggle</th><td>T4 (텐서 코어 있음), Linux CUDA 13 판. 같은 v0.8.1, 같은 f16 가중치</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li>배경 지우기(BiRefNet)는 f16·q8 이 같은 파일이라 결과가 픽셀 하나까지 같았다. 차이는 3D 를 만드는 단계에서만 생긴다.</li>
+    <li>같은 판·같은 가중치·같은 시드여도 그래픽카드가 다르면 첫 단계부터 결과가 갈라진다
+      (시드 1380986812 의 32칸 구조 칸 수: 이 PC 1392, Kaggle 1343).</li>
+  </ul>
+</section>
+
+<section id="time">
+  <h2><span class="no">1</span>걸린 시간</h2>
+  <div class="chart" role="img" aria-label="trellis.cpp 실행 시간. 시드 42: 이 PC f16 854초, 이 PC q8 426초, Kaggle f16 105초. 시드 1380986812: 이 PC f16 775초, 이 PC q8 369초, Kaggle f16 154초.">
+    <ul class="legend">
+      <li><span class="sw" style="--c: var(--s-f16)"></span>이 PC f16</li>
+      <li><span class="sw" style="--c: var(--s-q8)"></span>이 PC q8</li>
+      <li><span class="sw" style="--c: var(--s-kaggle)"></span>Kaggle f16</li>
+    </ul>
+    <div class="group">
+      <p class="group-title">시드 42</p>
+      <div class="row"><span class="name">이 PC f16</span><div class="track"><span class="bar" style="--v: 854; --c: var(--s-f16)" title="이 PC f16 · 시드 42 · 854초"></span><span class="val">14분 14초</span></div></div>
+      <div class="row"><span class="name">이 PC q8</span><div class="track"><span class="bar" style="--v: 426; --c: var(--s-q8)" title="이 PC q8 · 시드 42 · 426초"></span><span class="val">7분 6초</span></div></div>
+      <div class="row"><span class="name">Kaggle f16</span><div class="track"><span class="bar" style="--v: 105; --c: var(--s-kaggle)" title="Kaggle f16 · 시드 42 · 105초"></span><span class="val">1분 45초</span></div></div>
+    </div>
+    <div class="group">
+      <p class="group-title">시드 1380986812</p>
+      <div class="row"><span class="name">이 PC f16</span><div class="track"><span class="bar" style="--v: 775; --c: var(--s-f16)" title="이 PC f16 · 시드 1380986812 · 775초"></span><span class="val">12분 55초</span></div></div>
+      <div class="row"><span class="name">이 PC q8</span><div class="track"><span class="bar" style="--v: 369; --c: var(--s-q8)" title="이 PC q8 · 시드 1380986812 · 369초"></span><span class="val">6분 9초</span></div></div>
+      <div class="row"><span class="name">Kaggle f16</span><div class="track"><span class="bar" style="--v: 154; --c: var(--s-kaggle)" title="Kaggle f16 · 시드 1380986812 · 154초"></span><span class="val">2분 34초</span></div></div>
+    </div>
+  </div>
+  <p class="sub">trellis.cpp 가 돈 시간이다. Kaggle 은 여기에 기다림·주고받기가 더해져, 시드 42 는 모두 272초(4분 32초)였다.</p>
+
+  <details>
+    <summary>표로 보기</summary>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>시드</th><th class="num">이 PC f16</th><th class="num">이 PC q8</th><th class="num">Kaggle f16</th></tr></thead>
+        <tbody>
+          <tr><td>42</td><td class="num">854초 (14분 14초)</td><td class="num">426초 (7분 6초)</td><td class="num">105초 · 모두 272초</td></tr>
+          <tr><td>1380986812</td><td class="num">775초 (12분 55초)</td><td class="num">369초 (6분 9초)</td><td class="num">154초</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <h3>3D 를 만드는 세 흐름 단계 (초)</h3>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>단계</th><th class="num">이 PC f16</th><th class="num">이 PC q8</th><th class="num">Kaggle f16</th></tr></thead>
+      <tbody>
+        <tr><td>구조 흐름 <span class="sub">sparse structure</span></td><td class="num">507.0 / 469.5</td><td class="num">250.4 / 212.0</td><td class="num">33.7</td></tr>
+        <tr><td>모양 흐름 <span class="sub">shape SLAT</span></td><td class="num">153.8 / 138.2</td><td class="num">56.6 / 54.2</td><td class="num">9.8</td></tr>
+        <tr><td>텍스처 흐름 <span class="sub">texture SLAT</span></td><td class="num">100.1 / 83.5</td><td class="num">35.8 / 32.7</td><td class="num">6.0</td></tr>
+        <tr><td>그래픽 메모리 최대</td><td class="num">2.8GB</td><td class="num">1.8GB</td><td class="num">2.9GB</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="sub">이 PC 칸은 시드 42 / 시드 1380986812, Kaggle 칸은 시드 1380986812 다.</p>
+  <ul>
+    <li>q8 은 f16 보다 2.0~2.8배 빠르다. 이 PC f16 은 Kaggle T4 보다 흐름 단계가 14배쯤 느리고, q8 도 5.5~6.3배 느리다.</li>
+    <li>f16 은 q8 과 따로 잰 기록이다 (시드 42 는 <code>trellis.py</code>, 1380986812 는 <code>--verbose</code> 로 직접 실행).
+      같은 설정도 잴 때마다 10~20% 달라진다 (구조 흐름 f16 469~507초, q8 212~250초). 2배 차이는 그보다 훨씬 크다.</li>
+    <li>Kaggle 은 돌릴 때마다 실행 파일(26~29초)과 가중치(55~108초)를 새로 받는다. 이 시간도 주간 무료 GPU 시간에서 빠진다.</li>
+  </ul>
+</section>
+
+<section id="shape">
+  <h2><span class="no">2</span>모양</h2>
+  <p>비교 렌더는 스프라이트와 같은 카메라(80칸, 30도 내려다봄)로 아래(정면)·위(뒷모습)·옆에서 찍었다.
+    "윤곽 겹침"은 두 렌더에서 캐릭터가 차지한 자리가 얼마나 같은지(IoU, 1 이면 완전히 같음)다.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>비교</th><th>시드</th><th class="num">아래</th><th class="num">위</th><th class="num">옆</th><th class="num">80칸에서 한쪽만 칠한 칸</th></tr></thead>
+      <tbody>
+        <tr><td rowspan="2">이 PC f16 ↔ 이 PC q8</td><td>42</td><td class="num">0.941</td><td class="num">0.942</td><td class="num">0.919</td><td class="num">23 / 29 / 28</td></tr>
+        <tr><td>1380986812</td><td class="num">0.931</td><td class="num">0.927</td><td class="num">0.927</td><td class="num">29 / 48 / 19</td></tr>
+        <tr><td rowspan="2">이 PC f16 ↔ Kaggle f16</td><td>42</td><td class="num">0.927</td><td class="num">0.847</td><td class="num">0.807</td><td class="num">32 / 113 / 71</td></tr>
+        <tr><td>1380986812</td><td class="num">0.871</td><td class="num">0.797</td><td class="num">0.810</td><td class="num">67 / 162 / 73</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li>80칸에서 칠한 칸은 방향마다 560~870칸이다.</li>
+    <li>q8 로 바뀌는 모양은, 같은 f16 을 그래픽카드만 바꿔 돌릴 때 바뀌는 것보다 작다.</li>
+    <li>최종 면 수 (시드 42 / 1380986812): 이 PC f16 149,124 / 144,728, q8 144,018 / 146,656, Kaggle 147,292 / 147,230.</li>
+  </ul>
+  <figure>
+    <a href="images/trellis_3d_seed42.png"><img src="images/trellis_3d_seed42.png" alt="시드 42 의 이 PC f16, 이 PC q8, Kaggle f16 3D 모델을 앞·왼쪽·뒤·탑다운에서 본 비교" loading="lazy"></a>
+    <figcaption>시드 42 — 위에서부터 이 PC f16 · 이 PC q8 · Kaggle f16. 그림의 "지금 것"은 이 시험 때 <code>trellis.py</code> 기본(이 PC f16)이다.</figcaption>
+  </figure>
+  <figure>
+    <a href="images/trellis_3d_seed1380986812.png"><img src="images/trellis_3d_seed1380986812.png" alt="시드 1380986812 의 이 PC f16, 이 PC q8, Kaggle f16 3D 모델 비교" loading="lazy"></a>
+    <figcaption>시드 1380986812 — 같은 순서.</figcaption>
+  </figure>
+</section>
+
+<section id="color">
+  <h2><span class="no">3</span>색과 얼굴</h2>
+  <p>아래(정면) 렌더의 밝기다 (0~255, 사람 눈 기준 밝기). 머리는 캐릭터 키의 위쪽 15% 다.</p>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>돌린 곳</th><th class="num">시드 42 머리 / 몸 전체</th><th class="num">시드 1380986812 머리 / 몸 전체</th></tr></thead>
+      <tbody>
+        <tr><td><span class="who"><span class="dot" style="--c: var(--s-f16)"></span>이 PC f16</span></td><td class="num">32 / 58</td><td class="num">39 / 64</td></tr>
+        <tr><td><span class="who"><span class="dot" style="--c: var(--s-q8)"></span>이 PC q8</span></td><td class="num">13 / 41</td><td class="num">34 / 66</td></tr>
+        <tr><td><span class="who"><span class="dot" style="--c: var(--s-kaggle)"></span>Kaggle f16</span></td><td class="num">44 / 65</td><td class="num">48 / 71</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li>두 시드 모두 Kaggle 이 가장 밝다. 머리도 원래 그림처럼 갈색이다. 이 PC 결과는 머리가 더 까맣다.</li>
+    <li>q8 은 f16 보다 더 어둡다. 시드 42 는 몸 전체가, 시드 1380986812 는 머리만 어둡다.</li>
+    <li>그래서 80칸 정면 스프라이트에서 q8 은 얼굴 살색이 거의 보이지 않는다. Kaggle 이 얼굴이 가장 잘 보인다.</li>
+    <li>망토 뒷면: 시드 42 의 이 PC f16 에는 붉은 글자 같은 무늬가 생겼고 q8 에는 없다 (둘 다 회색빛).
+      시드 1380986812 는 이 PC f16·q8 이 붉고 Kaggle 이 회색빛이다.</li>
+    <li>신발: 시드 42 의 Kaggle 은 옆모습에서 신발 끝이 살짝 말려 올라갔다.</li>
+    <li>눈으로 본 평가: 시드 1380986812 의 이 PC f16 이 가장 나쁘다 (턱이 뾰족하고 색이 그림과 안 어울린다).
+      전체로는 Kaggle 이 가장 낫다.</li>
+  </ul>
+  <figure class="narrow">
+    <a href="images/trellis_faces.png"><img src="images/trellis_faces.png" alt="두 시드의 얼굴 확대와 80칸 정면 스프라이트 윗부분 비교" loading="lazy"></a>
+    <figcaption>얼굴 확대(왼쪽)와 80칸 정면 스프라이트 윗부분(오른쪽). 위 세 줄이 시드 42, 아래 세 줄이 시드 1380986812.</figcaption>
+  </figure>
+  <figure>
+    <a href="images/trellis_pixel_seed42.png"><img src="images/trellis_pixel_seed42.png" alt="시드 42 의 80칸 픽셀 스프라이트 아래·위·옆 비교" loading="lazy"></a>
+    <figcaption>80칸 픽셀 세 방향(아래·위·옆), 시드 42.</figcaption>
+  </figure>
+  <figure>
+    <a href="images/trellis_pixel_seed1380986812.png"><img src="images/trellis_pixel_seed1380986812.png" alt="시드 1380986812 의 80칸 픽셀 스프라이트 아래·위·옆 비교" loading="lazy"></a>
+    <figcaption>80칸 픽셀 세 방향, 시드 1380986812.</figcaption>
+  </figure>
+</section>
+
+<section id="verdict">
+  <h2><span class="no">4</span>결론</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>돌릴 곳</th><th>512 한 장</th><th>품질</th><th>쓰기 좋은 때</th></tr></thead>
+      <tbody>
+        <tr><td><span class="who"><span class="dot" style="--c: var(--s-kaggle)"></span>Kaggle f16</span></td><td>1분 45초~2분 34초<br><span class="sub">기다림·주고받기 포함 4분 32초 (한 번 잼)</span></td><td>가장 낫다. 밝고 얼굴이 보인다</td><td>기본으로 쓰기</td></tr>
+        <tr><td><span class="who"><span class="dot" style="--c: var(--s-f16)"></span>이 PC f16</span></td><td>13~14분</td><td>Kaggle 보다 어둡다</td><td>인터넷 없이 돌릴 때</td></tr>
+        <tr><td><span class="who"><span class="dot" style="--c: var(--s-q8)"></span>이 PC q8</span></td><td>6~7분</td><td>모양은 f16 과 거의 같고 색은 더 어둡다</td><td>시드 여러 개를 빨리 훑어볼 때</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <ul>
+    <li>품질은 가중치(f16·q8)보다 시드에 따라 더 크게 달라진다. 시드 몇 개를 돌려 미리보기를 보고 고르는 게 낫다.</li>
+    <li>두 시드만 비교했다. "이 PC 가 늘 더 어둡다", "q8 이 늘 더 어둡다"고 단정하기는 이르다.</li>
+    <li>Kaggle 조건: 인터넷, 전화 인증을 마친 계정, 주간 무료 GPU 시간(30시간쯤)에서 빠짐, 붐비면 차례를 기다림,
+      그림이 Kaggle 비공개 데이터셋에 올라감.</li>
+  </ul>
+</section>
+
+<section id="todo">
+  <h2><span class="no">5</span>남은 일</h2>
+  <ul>
+    <li><code>pixel-pipeline/trellis.py</code> 의 기본은 아직 이 PC f16 이다. Kaggle 을 기본으로 할지, q8 을 고를 수 있게 할지 정한다.</li>
+    <li>시드 여러 개를 한 번에 돌려 미리보기를 한 장으로 모아 고르는 기능이 있으면 좋다.
+      Kaggle 은 실행 파일·가중치를 한 번만 받고 여러 시드를 돌리면 시간이 덜 든다.</li>
+    <li>GTX 16xx 는 텐서 코어가 없어 ggml 이 <code>CMAKE_CUDA_ARCHITECTURES=61-virtual;80-virtual</code> 과
+      <code>GGML_CUDA_FORCE_MMQ</code> 로 직접 빌드하라고 권한다. 배포판 CUDA 12 판은 <code>60;61;70</code> 으로 빌드되어
+      이 카드에서는 sm_70 코드가 돌 것이라 시험하지 않았다.</li>
+  </ul>
+</section>
+
+<section id="appendix">
+  <h2><span class="no">부록</span>다시 해 보기</h2>
+  <p><code>pixel-pipeline/</code> 폴더에서 돌린다.</p>
+<pre><code><span class="c"># 이 PC f16 (trellis.py 기본)</span>
+.venv\Scripts\python.exe trellis.py 정면그림.png --out work\test\warrior.glb --seed 42
+
+<span class="c"># Kaggle f16</span>
+.venv\Scripts\python.exe trellis.py 정면그림.png --out work\test\warrior.glb --seed 42 --backend kaggle
+
+<span class="c"># q8 가중치 받기 (tools\trellis_cpp\models\q8\ 에 들어간다)</span>
+.venv\Scripts\hf.exe download ilintar/trellis2-gguf q8/birefnet.gguf q8/dinov3.gguf q8/ss_flow.gguf q8/ss_dec.gguf q8/shape_flow_512.gguf q8/shape_dec.gguf q8/tex_flow_512.gguf q8/tex_dec.gguf --local-dir tools\trellis_cpp\models
+
+<span class="c"># 이 PC q8 (trellis.py 에 옵션이 아직 없어 직접 돌린다)</span>
+tools\trellis_cpp\bin\trellis-cli.exe 정면그림.png out.glb --models tools\trellis_cpp\models\q8 --res 512 --seed 42 --atlas 1024 --webp off --dump-bg --require-gpu</code></pre>
+</section>
+
+<footer>
+  비교 렌더와 숫자(윤곽 겹침, 밝기)는 임시 스크립트로 만들었고 저장소에는 넣지 않았다.
+  그림을 누르면 원래 크기로 열린다.
+</footer>
+
+</div>
+</body>
+</html>
